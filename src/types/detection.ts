@@ -4,12 +4,13 @@
 
 // วัตถุที่ตรวจพบแต่ละชิ้น
 export interface DetectedObject {
-  obj_id: string;      // รหัสประจำตัววัตถุ เช่น "obj_001"
-  type: string;        // ประเภทวัตถุ เช่น "drone", "person", "car"
-  lat: number;         // พิกัด Latitude
-  lng: number;         // พิกัด Longitude
-  objective: string;   // วัตถุประสงค์ เช่น "unknown", "our", "enemy"
-  size: string;        // ขนาดวัตถุ เช่น "small", "medium", "large"
+  obj_id: string;      // e.g. "obj_001"
+  type: string;        // e.g. "drone", "person", "car"
+  lat: number;         // latitude (decimal degrees)
+  lng: number;         // longitude (decimal degrees)
+  objective: string;   // mission classification
+  size: string;        // "small", "medium", "large"
+  speed?: number;      // optional speed in meters per second
 }
 
 // ข้อมูลกล้อง
@@ -35,3 +36,4 @@ export interface DetectionResponse {
   success: boolean;              // สถานะความสำเร็จ
   data: DetectionEvent[];        // รายการ detection events
 }
+

@@ -31,6 +31,9 @@ interface MapComponentProps {
   imagePath?: string;
   cameraLocation?: string;
   focusPoint?: { lat: number; lng: number } | null;
+  defaultLocation?: { lat: number; lng: number };
+  onDefaultLocationChange?: (coords: { lat: number; lng: number }) => void;
+  detectionRadius?: number;
 }
 
 type MarkerDescriptor =
@@ -53,6 +56,11 @@ type SearchSuggestion = {
   center: [number, number];
 };
 
+type LatLng = {
+  lat: number;
+  lng: number;
+};
+
 const toNumber = (value: number | string): number => (typeof value === 'number' ? value : parseFloat(value));
 
 const distanceBetween = (lat1: number, lng1: number, lat2: number, lng2: number) => {
@@ -60,6 +68,8 @@ const distanceBetween = (lat1: number, lng1: number, lat2: number, lng2: number)
   const dLng = lng1 - lng2;
   return Math.sqrt(dLat * dLat + dLng * dLng);
 };
+
+const EARTH_RADIUS_METERS = 6371000;
 
 const getMarkerDescriptors = (items: DetectedObject[], zoom: number): MarkerDescriptor[] => {
   if (items.length === 0) return [];
@@ -115,7 +125,28 @@ const getMarkerDescriptors = (items: DetectedObject[], zoom: number): MarkerDesc
   );
 };
 
-const MapComponent = ({ objects, imagePath, cameraLocation, focusPoint }: MapComponentProps) => {
+const createCirclePolygon = (center: { lat: number; lng: number }, radiusMeters: number, steps = 64) => {
+  const coords: [number, number][] = [];
+  for (let i = 0; i <= steps; i++) {
+    const angle = (i / steps) * 2 * Math.PI;
+    const dx = (radiusMeters / EARTH_RADIUS_METERS) * Math.cos(angle);
+    const dy = (radiusMeters / EARTH_RADIUS_METERS) * Math.sin(angle);
+    const lat = center.lat + (dy * 180) / Math.PI;
+    const lng = center.lng + ((dx * 180) / Math.PI) / Math.cos((center.lat * Math.PI) / 180);
+    coords.push([lng, lat]);
+  }
+  return coords;
+};
+
+const MapComponent = ({
+  objects,
+  imagePath,
+  cameraLocation,
+  focusPoint,
+  defaultLocation,
+  onDefaultLocationChange,
+  detectionRadius,
+}: MapComponentProps) => {
   const mapContainer = useRef<HTMLDivElement>(null);
   const map = useRef<mapboxgl.Map | null>(null);
   const markers = useRef<mapboxgl.Marker[]>([]);
@@ -125,25 +156,41 @@ const MapComponent = ({ objects, imagePath, cameraLocation, focusPoint }: MapCom
   const [selectedObject, setSelectedObject] = useState<DetectedObject | null>(null);
   const [cardPosition, setCardPosition] = useState<{ x: number; y: number } | null>(null);
   const [currentZoom, setCurrentZoom] = useState(17);
-  const [defaultCoordinates, setDefaultCoordinates] = useState<{ lat: number; lng: number } | null>(null);
+  const fallbackLocation = useMemo(
+    () => (cameraLocation === 'offence' ? LOCATIONS.offence : LOCATIONS.defence),
+    [cameraLocation],
+  );
+  const [defaultCoordinates, setDefaultCoordinates] = useState<LatLng>(defaultLocation ?? fallbackLocation);
   const [showDefaultInfo, setShowDefaultInfo] = useState(false);
   const [searchValue, setSearchValue] = useState('');
   const [searchFeedback, setSearchFeedback] = useState<{ type: 'success' | 'error'; message: string } | null>(null);
   const [searchOptions, setSearchOptions] = useState<SearchSuggestion[]>([]);
   const [searchLoading, setSearchLoading] = useState(false);
+  const [isMapReady, setIsMapReady] = useState(false);
 
   const markerDescriptors = useMemo(
     () => getMarkerDescriptors(objects, currentZoom),
     [objects, currentZoom],
   );
 
+  useEffect(() => {
+    if (defaultLocation) {
+      setDefaultCoordinates(defaultLocation);
+    }
+  }, [defaultLocation?.lat, defaultLocation?.lng]);
+
+  useEffect(() => {
+    if (!defaultLocation) {
+      setDefaultCoordinates(fallbackLocation);
+    }
+  }, [defaultLocation, fallbackLocation]);
+
   mapboxgl.accessToken = import.meta.env.VITE_MAPBOX_TOKEN;
 
   // หาจุดกึ่งกลางแผนที่ตาม camera location
   const getMapCenter = () => {
-    if (cameraLocation === 'defence') return [LOCATIONS.defence.lng, LOCATIONS.defence.lat];
-    if (cameraLocation === 'offence') return [LOCATIONS.offence.lng, LOCATIONS.offence.lat];
-    return [101.166279, 14.297567];
+    const center = defaultCoordinates ?? fallbackLocation;
+    return [center.lng, center.lat] as [number, number];
   };
 
   // หา icon name ตามประเภทวัตถุ
@@ -179,7 +226,10 @@ const MapComponent = ({ objects, imagePath, cameraLocation, focusPoint }: MapCom
   const createOrUpdateDefaultMarker = () => {
     if (!map.current) return;
 
-    const [lng, lat] = getMapCenter();
+    const center = defaultCoordinates ?? fallbackLocation;
+    const [lng, lat] = [center.lng, center.lat];
+    if (!Number.isFinite(lat) || !Number.isFinite(lng)) return;
+
     defaultMarkerRef.current?.remove();
 
     const markerEl = document.createElement('div');
@@ -224,26 +274,38 @@ const MapComponent = ({ objects, imagePath, cameraLocation, focusPoint }: MapCom
 
     markerEl.addEventListener('click', (e) => {
       e.stopPropagation();
-      setDefaultCoordinates({ lat, lng });
       setShowDefaultInfo(true);
-      if (map.current) {
-        map.current.flyTo({
-          center: [lng, lat],
-          zoom: Math.max(map.current.getZoom() ?? 0, 17),
-          duration: 800,
-        });
-      }
+      map.current?.flyTo({
+        center: [lng, lat],
+        zoom: Math.max(map.current?.getZoom() ?? 0, 17),
+        duration: 800,
+      });
     });
 
-    defaultMarkerRef.current = new mapboxgl.Marker(markerEl).setLngLat([lng, lat]).addTo(map.current);
-    setDefaultCoordinates({ lat, lng });
+    const marker = new mapboxgl.Marker({ element: markerEl, draggable: true })
+      .setLngLat([lng, lat])
+      .addTo(map.current);
+
+    marker.on('dragend', () => {
+      const lngLat = marker.getLngLat();
+      const coords = { lat: lngLat.lat, lng: lngLat.lng };
+      setDefaultCoordinates(coords);
+      setShowDefaultInfo(true);
+      onDefaultLocationChange?.(coords);
+    });
+
+    defaultMarkerRef.current = marker;
   };
 
+  useEffect(() => {
+    if (!isMapReady) return;
+    createOrUpdateDefaultMarker();
+  }, [isMapReady, defaultCoordinates]);
+
   const handleRecenter = () => {
-    if (!map.current) return;
-    const [lng, lat] = getMapCenter();
+    if (!map.current || !defaultCoordinates) return;
     map.current.flyTo({
-      center: [lng, lat],
+      center: [defaultCoordinates.lng, defaultCoordinates.lat],
       zoom: 17,
       duration: 700,
     });
@@ -277,6 +339,8 @@ const MapComponent = ({ objects, imagePath, cameraLocation, focusPoint }: MapCom
         zoom: 16,
         duration: 900,
       });
+      setSearchValue(feature.place_name ?? query);
+      setSearchOptions([]);
       setSearchFeedback({ type: 'success', message: feature.place_name ?? 'Location found.' });
     } catch (error) {
       setSearchFeedback({
@@ -352,6 +416,68 @@ const MapComponent = ({ objects, imagePath, cameraLocation, focusPoint }: MapCom
     };
   }, [searchValue]);
 
+  useEffect(() => {
+    if (!isMapReady || !map.current) return;
+    const sourceId = 'detection-radius-source';
+    const fillId = 'detection-radius-fill';
+    const outlineId = 'detection-radius-outline';
+
+    const updateEmpty = () => {
+      const existing = map.current?.getSource(sourceId) as mapboxgl.GeoJSONSource | undefined;
+      if (existing) {
+        existing.setData({ type: 'FeatureCollection', features: [] });
+      }
+    };
+
+    if (!defaultCoordinates || !detectionRadius || detectionRadius <= 0) {
+      updateEmpty();
+      return;
+    }
+
+    const polygon = createCirclePolygon(defaultCoordinates, detectionRadius);
+    const outlineColor = '#ff6f00';
+    const fillColor = 'rgba(255, 152, 0, 0.15)';
+    const data = {
+      type: 'FeatureCollection' as const,
+      features: [
+        {
+          type: 'Feature' as const,
+          geometry: {
+            type: 'Polygon' as const,
+            coordinates: [polygon],
+          },
+          properties: {},
+        },
+      ],
+    };
+
+    const existingSource = map.current.getSource(sourceId) as mapboxgl.GeoJSONSource | undefined;
+
+    if (!existingSource) {
+      map.current.addSource(sourceId, { type: 'geojson', data });
+      map.current.addLayer({
+        id: fillId,
+        type: 'fill',
+        source: sourceId,
+        paint: {
+          'fill-color': fillColor,
+        },
+      });
+      map.current.addLayer({
+        id: outlineId,
+        type: 'line',
+        source: sourceId,
+        paint: {
+          'line-color': outlineColor,
+          'line-opacity': 0.9,
+          'line-width': detectionRadius < 500 ? 1.5 : 2.5,
+        },
+      });
+    } else {
+      existingSource.setData(data);
+    }
+  }, [defaultCoordinates, detectionRadius, isMapReady]);
+
   const handleClose = () => {
     setSelectedObject(null);
     setCardPosition(null);
@@ -386,6 +512,7 @@ const MapComponent = ({ objects, imagePath, cameraLocation, focusPoint }: MapCom
     };
 
     map.current.on('load', () => {
+      setIsMapReady(true);
       createOrUpdateDefaultMarker();
       handleZoomChange();
     });
@@ -393,6 +520,15 @@ const MapComponent = ({ objects, imagePath, cameraLocation, focusPoint }: MapCom
 
     return () => {
       map.current?.off('zoomend', handleZoomChange);
+      if (map.current?.getLayer('detection-radius-fill')) {
+        map.current.removeLayer('detection-radius-fill');
+      }
+      if (map.current?.getLayer('detection-radius-outline')) {
+        map.current.removeLayer('detection-radius-outline');
+      }
+      if (map.current?.getSource('detection-radius-source')) {
+        map.current.removeSource('detection-radius-source');
+      }
       defaultMarkerRef.current?.remove();
       defaultMarkerRef.current = null;
       map.current?.remove();
@@ -408,7 +544,6 @@ const MapComponent = ({ objects, imagePath, cameraLocation, focusPoint }: MapCom
         duration: 1000,
       });
     }
-    createOrUpdateDefaultMarker();
   }, [cameraLocation]);
 
   // สร้าง markers สำหรับวัตถุทั้งหมด
@@ -676,6 +811,33 @@ const MapComponent = ({ objects, imagePath, cameraLocation, focusPoint }: MapCom
     });
   }, [focusPoint]);
 
+  useEffect(() => {
+    if (!isMapReady || !map.current) return;
+    const points: LatLng[] = [];
+    if (defaultCoordinates) points.push(defaultCoordinates);
+    markerDescriptors.forEach((descriptor) => {
+      points.push({ lat: descriptor.lat, lng: descriptor.lng });
+    });
+
+    if (points.length === 0) return;
+
+    if (points.length === 1) {
+      map.current.flyTo({
+        center: [points[0].lng, points[0].lat],
+        zoom: Math.max(map.current.getZoom() ?? 0, 16),
+        duration: 600,
+      });
+      return;
+    }
+
+    const bounds = new mapboxgl.LngLatBounds(
+      [points[0].lng, points[0].lat],
+      [points[0].lng, points[0].lat],
+    );
+    points.slice(1).forEach((pt) => bounds.extend([pt.lng, pt.lat]));
+    map.current.fitBounds(bounds, { padding: 80, duration: 800, maxZoom: 17.5 });
+  }, [isMapReady, markerDescriptors, defaultCoordinates]);
+
   // อัพเดทตำแหน่ง popup เมื่อแผนที่เลื่อนหรือ zoom
   useEffect(() => {
     if (!map.current || !selectedMarkerRef.current) return;
@@ -786,6 +948,7 @@ const MapComponent = ({ objects, imagePath, cameraLocation, focusPoint }: MapCom
               border: '1px solid',
               borderColor: 'divider',
               borderRadius: 1,
+              bgcolor: (theme) => theme.palette.background.paper,
             }}
           >
             {searchOptions.map((option) => (

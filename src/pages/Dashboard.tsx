@@ -20,6 +20,7 @@ import {
   Stack,
   Grid,
   Typography,
+  TextField,
 } from '@mui/material';
 import { LocalizationProvider } from '@mui/x-date-pickers/LocalizationProvider';
 import { AdapterDayjs } from '@mui/x-date-pickers/AdapterDayjs';
@@ -193,9 +194,93 @@ const Panel = ({ title, children }: { title?: string; children: ReactNode }) => 
   </Paper>
 );
 
-const DefensiveAlertPanel = ({ feed }: { feed: UseDroneFeedResult }) => {
+const EARTH_RADIUS_METERS = 6371000;
+
+type LatLng = { lat: number; lng: number };
+
+const toRadians = (value: number) => (value * Math.PI) / 180;
+
+const calculateDistanceMeters = (from: LatLng, to: LatLng) => {
+  const dLat = toRadians(to.lat - from.lat);
+  const dLng = toRadians(to.lng - from.lng);
+  const lat1 = toRadians(from.lat);
+  const lat2 = toRadians(to.lat);
+  const sinDLat = Math.sin(dLat / 2);
+  const sinDLng = Math.sin(dLng / 2);
+  const a = sinDLat * sinDLat + Math.cos(lat1) * Math.cos(lat2) * sinDLng * sinDLng;
+  const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+  return EARTH_RADIUS_METERS * c;
+};
+
+const formatEta = (seconds: number | null) => {
+  if (seconds === null || !Number.isFinite(seconds)) return 'N/A';
+  if (seconds < 60) return `${Math.max(1, Math.round(seconds))}s`;
+  const minutes = Math.floor(seconds / 60);
+  const secs = Math.round(seconds % 60);
+  return secs > 0 ? `${minutes}m ${secs}s` : `${minutes}m`;
+};
+
+const formatDistance = (meters: number) => {
+  if (!Number.isFinite(meters)) return 'N/A';
+  if (meters >= 1000) return `${(meters / 1000).toFixed(2)} km`;
+  return `${meters.toFixed(0)} m`;
+};
+
+const DEFAULT_DEFENCE_LOCATION: LatLng = { lat: 14.297567, lng: 101.166279 };
+const DEFAULT_OFFENCE_LOCATION: LatLng = { lat: 14.286451, lng: 101.171298 };
+
+const DefensiveAlertPanel = ({
+  feed,
+  detectionRadius,
+  onRadiusChange,
+  defaultLocation,
+}: {
+  feed: UseDroneFeedResult;
+  detectionRadius: number;
+  onRadiusChange: (radius: number) => void;
+  defaultLocation: LatLng | null;
+}) => {
   const errorMessage = feed.error ? (feed.error instanceof Error ? feed.error.message : String(feed.error)) : null;
   const latest = feed.events[0];
+  const [radiusInput, setRadiusInput] = useState(String(detectionRadius));
+
+  useEffect(() => {
+    setRadiusInput(String(detectionRadius));
+  }, [detectionRadius]);
+
+  const handleRadiusSubmit = () => {
+    const parsed = Number(radiusInput);
+    if (!Number.isFinite(parsed) || parsed <= 0) {
+      setRadiusInput(String(detectionRadius));
+      return;
+    }
+    onRadiusChange(parsed);
+  };
+
+  const intruders = useMemo(() => {
+    if (!defaultLocation || detectionRadius <= 0) return [];
+
+    const seen = new Map<string, { object: DetectedObject; distance: number; etaSeconds: number | null }>();
+
+    feed.events.forEach((event) => {
+      event.objects?.forEach((obj) => {
+        const lat = typeof obj.lat === 'number' ? obj.lat : parseFloat(String(obj.lat));
+        const lng = typeof obj.lng === 'number' ? obj.lng : parseFloat(String(obj.lng));
+        if (!Number.isFinite(lat) || !Number.isFinite(lng)) return;
+
+        const distance = calculateDistanceMeters(defaultLocation, { lat, lng });
+        if (distance > detectionRadius) return;
+
+        if (!seen.has(obj.obj_id)) {
+          const speed = typeof obj.speed === 'number' ? obj.speed : null;
+          const etaSeconds = speed && speed > 0 ? distance / speed : null;
+          seen.set(obj.obj_id, { object: obj, distance, etaSeconds });
+        }
+      });
+    });
+
+    return Array.from(seen.values()).sort((a, b) => a.distance - b.distance);
+  }, [feed.events, detectionRadius, defaultLocation]);
 
   return (
     <Panel title="Alert Status">
@@ -224,10 +309,54 @@ const DefensiveAlertPanel = ({ feed }: { feed: UseDroneFeedResult }) => {
           <Alert severity="info">Awaiting defensive detections...</Alert>
         )}
 
-        <Box sx={{ border: '1px dashed', borderRadius: 1, borderColor: 'divider', flexGrow: 1, p: 2 }}>
-          <Typography variant="body2" color="text.secondary" align='center'>
-            No unauthorized drones detected in the area.
-          </Typography>
+        <Stack spacing={1}>
+          <Typography variant="subtitle2">Detection radius (meters)</Typography>
+          <Stack direction="row" spacing={1}>
+            <TextField
+              size="small"
+              type="number"
+              value={radiusInput}
+              onChange={(e) => setRadiusInput(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter') handleRadiusSubmit();
+              }}
+              sx={{ minWidth: 120 }}
+            />
+            <Button variant="contained" onClick={handleRadiusSubmit} size="small" sx={{ textTransform: 'none' }}>
+              Update radius
+            </Button>
+          </Stack>
+          {defaultLocation && (
+            <Typography variant="caption" color="text.secondary">
+              Default marker: lat {defaultLocation.lat.toFixed(5)} • lng {defaultLocation.lng.toFixed(5)}
+            </Typography>
+          )}
+        </Stack>
+
+        <Box sx={{ border: '1px dashed', borderRadius: 1, borderColor: 'divider', flexGrow: 1, p: 2, overflowY: 'auto' }}>
+          {!defaultLocation ? (
+            <Typography variant="body2" color="text.secondary">
+              Default marker not set. Set the marker on the map to enable proximity alerts.
+            </Typography>
+          ) : intruders.length === 0 ? (
+            <Typography variant="body2" color="text.secondary" align="center">
+              No unauthorized drones detected within {formatDistance(detectionRadius)}.
+            </Typography>
+          ) : (
+            <Stack spacing={1}>
+              {intruders.map(({ object, distance, etaSeconds }) => (
+                <Paper key={object.obj_id} variant="outlined" sx={{ p: 1.5 }}>
+                  <Typography variant="subtitle2" fontWeight={600}>
+                    {object.type} · {object.obj_id}
+                  </Typography>
+                  <Typography variant="body2" color="text.secondary">
+                    Distance: {formatDistance(distance)} · Speed: {object.speed ? `${object.speed} m/s` : 'N/A'} · ETA:{' '}
+                    {formatEta(etaSeconds)}
+                  </Typography>
+                </Paper>
+              ))}
+            </Stack>
+          )}
         </Box>
       </Stack>
     </Panel>
@@ -240,12 +369,18 @@ const MapPanel = ({
   defaultCameraLocation,
   focusPoint,
   objects,
+  detectionRadius,
+  defaultLocation,
+  onDefaultLocationChange,
 }: {
   title?: string;
   event?: DetectionEvent;
   defaultCameraLocation?: string;
   focusPoint?: { lat: number; lng: number } | null;
   objects?: DetectedObject[];
+  detectionRadius?: number;
+  defaultLocation?: LatLng;
+  onDefaultLocationChange?: (coords: LatLng) => void;
 }) => {
   const displayedObjects = objects ?? event?.objects ?? [];
   const hasObjects = displayedObjects.length > 0;
@@ -258,7 +393,7 @@ const MapPanel = ({
           <Box
             sx={{
               position: 'absolute',
-              top: 12,
+              top: 90,
               left: 12,
               zIndex: 2,
               px: 1.5,
@@ -279,6 +414,9 @@ const MapPanel = ({
           imagePath={event?.image_path}
           cameraLocation={cameraLocation}
           focusPoint={focusPoint}
+          detectionRadius={detectionRadius}
+          defaultLocation={defaultLocation}
+          onDefaultLocationChange={onDefaultLocationChange}
         />
 
         {!hasObjects && (
@@ -617,6 +755,8 @@ const DashboardPage = () => {
   const [offensiveFocus, setOffensiveFocus] = useState<{ lat: number; lng: number } | null>(null);
   const [selectedDroneId, setSelectedDroneId] = useState<string | null>(null);
   const [detailDetection, setDetailDetection] = useState<DetectionEvent | null>(null);
+  const [defensiveRadius, setDefensiveRadius] = useState(1500);
+  const [defensiveDefaultLocation, setDefensiveDefaultLocation] = useState<LatLng>(DEFAULT_DEFENCE_LOCATION);
 
   const handleDroneSelect = (object: DetectedObject) => {
     const lat = typeof object.lat === 'number' ? object.lat : parseFloat(String(object.lat));
@@ -663,7 +803,12 @@ const DashboardPage = () => {
             sx={{ minHeight: 0, height: '100%', overflow: 'hidden' }}
           >
             <Grid size={{ xs: 12, md: 6, lg: 2 }} sx={{ height: '100%', minHeight: 0 }}>
-              <DefensiveAlertPanel feed={defensiveFeed} />
+              <DefensiveAlertPanel
+                feed={defensiveFeed}
+                detectionRadius={defensiveRadius}
+                onRadiusChange={setDefensiveRadius}
+                defaultLocation={defensiveDefaultLocation}
+              />
             </Grid>
 
             <Grid size={{ xs: 12, md: 6, lg: 6 }} sx={{ height: '100%', minHeight: 0 }}>
@@ -671,6 +816,9 @@ const DashboardPage = () => {
                 event={defensiveLatest}
                 defaultCameraLocation="defence"
                 objects={defensiveObjects.map(({ object }) => object)}
+                detectionRadius={defensiveRadius}
+                defaultLocation={defensiveDefaultLocation}
+                onDefaultLocationChange={setDefensiveDefaultLocation}
               />
             </Grid>
 
@@ -715,6 +863,7 @@ const DashboardPage = () => {
                 defaultCameraLocation="offence"
                 focusPoint={offensiveFocus}
                 objects={offensiveObjects.map(({ object }) => object)}
+                defaultLocation={DEFAULT_OFFENCE_LOCATION}
               />
             </Grid>
 
