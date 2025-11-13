@@ -23,6 +23,7 @@ import {
   TextField,
   Tabs,
   Tab,
+  Snackbar,
 } from '@mui/material';
 import { LocalizationProvider } from '@mui/x-date-pickers/LocalizationProvider';
 import { AdapterDayjs } from '@mui/x-date-pickers/AdapterDayjs';
@@ -83,6 +84,7 @@ const buildLatestObjects = (events: DetectionEvent[]): LatestObjectEntry[] => {
 };
 
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL?.replace('/api', '') ?? '';
+const API_ROOT_URL = import.meta.env.VITE_API_BASE_URL?.replace(/\/$/, '') ?? '';
 
 const getDetectionImageUrl = (imagePath?: string | null) => {
   if (!imagePath || !API_BASE_URL) return null;
@@ -630,6 +632,8 @@ const HistoryPanel = ({
   const [endDate, setEndDate] = useState<Dayjs | null>(null);
   const [isClearing, setIsClearing] = useState(false);
   const [clearStatus, setClearStatus] = useState<{ type: 'success' | 'error'; message: string } | null>(null);
+  const [confirmOpen, setConfirmOpen] = useState(false);
+  const [snackbarOpen, setSnackbarOpen] = useState(false);
 
   const filteredEvents = useMemo(() => {
     const startTime = startDate ? startDate.startOf('day').valueOf() : null;
@@ -659,25 +663,23 @@ const HistoryPanel = ({
 
   const handleClearLogs = async () => {
     if (!camId || !token) return;
+    setConfirmOpen(false);
     setIsClearing(true);
     setClearStatus(null);
     try {
-      const response = await fetch(
-        `${API_BASE_URL}/api/object-detection/clear/${camId}`,
-        {
-          method: 'DELETE',
-          headers: {
-            'x-camera-token': token,
-          },
-        }
-      );
+      const response = await fetch(`${API_ROOT_URL}/object-detection/clear/${camId}`, {
+        method: 'DELETE',
+        headers: {
+          'x-camera-token': token,
+        },
+      });
 
       if (!response.ok) {
         const text = await response.text();
         throw new Error(text || 'Failed to clear history');
       }
 
-      setClearStatus({ type: 'success', message: 'History cleared successfully.' });
+      setClearStatus({ type: 'success', message: 'Clearing history...' });
       onCleared?.();
     } catch (error) {
       setClearStatus({
@@ -688,6 +690,15 @@ const HistoryPanel = ({
       setIsClearing(false);
     }
   };
+
+  useEffect(() => {
+    if (clearStatus) {
+      setSnackbarOpen(true);
+      const timer = setTimeout(() => setSnackbarOpen(false), 10000);
+      return () => clearTimeout(timer);
+    }
+    return undefined;
+  }, [clearStatus]);
 
 
   return (
@@ -702,12 +713,11 @@ const HistoryPanel = ({
               <Button
                 size="small"
                 variant="outlined"
-                onClick={handleClearLogs}
-                disabled={isClearing}
+                onClick={() => setConfirmOpen(true)}
                 startIcon={<Icon icon="mdi:delete-outline" width={16} />}
                 sx={{ textTransform: 'none' }}
               >
-                {isClearing ? 'Clearing...' : 'Clear'}
+                Clear
               </Button>
             )}
           </Stack>
@@ -731,8 +741,6 @@ const HistoryPanel = ({
             />
           </Stack>
         </Stack>
-
-        {clearStatus && <Alert severity={clearStatus.type}>{clearStatus.message}</Alert>}
 
         <Box sx={{ flexGrow: 1, overflowY: 'auto' }}>
           {filteredEvents.length === 0 ? (
@@ -793,6 +801,33 @@ const HistoryPanel = ({
             </List>
           )}
         </Box>
+
+        <Dialog open={confirmOpen} onClose={() => setConfirmOpen(false)}>
+          <DialogTitle>Clear history?</DialogTitle>
+          <DialogContent dividers>
+            <Typography variant="body2">
+              This will remove all detection history for this camera. This action cannot be undone. Continue?
+            </Typography>
+          </DialogContent>
+          <DialogActions>
+            <Button onClick={() => setConfirmOpen(false)} disabled={isClearing}>
+              Cancel
+            </Button>
+            <Button color="error" onClick={handleClearLogs} disabled={isClearing} startIcon={<Icon icon="mdi:delete" />}>
+              {isClearing ? 'Clearing…' : 'Confirm'}
+            </Button>
+          </DialogActions>
+        </Dialog>
+
+        {clearStatus && (
+          <Snackbar
+            open={snackbarOpen}
+            onClose={() => setSnackbarOpen(false)}
+            anchorOrigin={{ vertical: 'bottom', horizontal: 'center' }}
+          >
+            <Alert severity={clearStatus.type}>{clearStatus.message}</Alert>
+          </Snackbar>
+        )}
       </Stack>
     </Panel>
   );
@@ -997,6 +1032,8 @@ const DashboardPage = () => {
               <HistoryPanel
                 title="Filter by Date"
                 events={offensiveFeed.events}
+                enableDetails
+                onShowDetail={setDetailDetection}
                 camId={droneProfiles.offensive.camId}
                 token={droneProfiles.offensive.token}
               />
@@ -1010,7 +1047,3 @@ const DashboardPage = () => {
   );
 };
 export default DashboardPage;
-
-
-
-
