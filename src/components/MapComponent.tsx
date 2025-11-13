@@ -3,7 +3,7 @@
  * คลิก marker เพื่อแสดงรายละเอียดใน popup
  */
 
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import mapboxgl from 'mapbox-gl';
 import { Box, Button, CircularProgress, IconButton, Stack, TextField, Typography } from '@mui/material';
 import { Icon } from '@iconify/react';
@@ -155,6 +155,7 @@ const MapComponent = ({
 
   const [selectedObject, setSelectedObject] = useState<DetectedObject | null>(null);
   const [cardPosition, setCardPosition] = useState<{ x: number; y: number } | null>(null);
+  const popupRef = useRef<HTMLDivElement | null>(null);
   const [currentZoom, setCurrentZoom] = useState(17);
   const fallbackLocation = useMemo(
     () => (cameraLocation === 'offence' ? LOCATIONS.offence : LOCATIONS.defence),
@@ -167,6 +168,7 @@ const MapComponent = ({
   const [searchOptions, setSearchOptions] = useState<SearchSuggestion[]>([]);
   const [searchLoading, setSearchLoading] = useState(false);
   const [searchOpen, setSearchOpen] = useState(true);
+  const [shouldAutoFit, setShouldAutoFit] = useState(true);
   const [isMapReady, setIsMapReady] = useState(false);
 
   const markerDescriptors = useMemo(
@@ -310,6 +312,11 @@ const MapComponent = ({
       zoom: 17,
       duration: 700,
     });
+  };
+
+  const handleResetView = () => {
+    setShouldAutoFit(true);
+    fitToAllPoints();
   };
 
   const handleSearchLocation = async () => {
@@ -512,15 +519,23 @@ const MapComponent = ({
       if (map.current) setCurrentZoom(map.current.getZoom());
     };
 
+    const disableAutoFit = () => setShouldAutoFit(false);
+
     map.current.on('load', () => {
       setIsMapReady(true);
       createOrUpdateDefaultMarker();
       handleZoomChange();
     });
     map.current.on('zoomend', handleZoomChange);
+    map.current.on('dragstart', disableAutoFit);
+    map.current.on('zoomstart', disableAutoFit);
+    map.current.on('rotatestart', disableAutoFit);
 
     return () => {
       map.current?.off('zoomend', handleZoomChange);
+      map.current?.off('dragstart', disableAutoFit);
+      map.current?.off('zoomstart', disableAutoFit);
+      map.current?.off('rotatestart', disableAutoFit);
       if (map.current?.getLayer('detection-radius-fill')) {
         map.current.removeLayer('detection-radius-fill');
       }
@@ -812,32 +827,41 @@ const MapComponent = ({
     });
   }, [focusPoint]);
 
-  useEffect(() => {
-    if (!isMapReady || !map.current) return;
-    const points: LatLng[] = [];
-    if (defaultCoordinates) points.push(defaultCoordinates);
-    markerDescriptors.forEach((descriptor) => {
-      points.push({ lat: descriptor.lat, lng: descriptor.lng });
-    });
-
-    if (points.length === 0) return;
-
-    if (points.length === 1) {
-      map.current.flyTo({
-        center: [points[0].lng, points[0].lat],
-        zoom: Math.max(map.current.getZoom() ?? 0, 16),
-        duration: 600,
+  const fitToAllPoints = useCallback(
+    (withAnimation = true) => {
+      if (!isMapReady || !map.current) return;
+      const points: LatLng[] = [];
+      if (defaultCoordinates) points.push(defaultCoordinates);
+      markerDescriptors.forEach((descriptor) => {
+        points.push({ lat: descriptor.lat, lng: descriptor.lng });
       });
-      return;
-    }
 
-    const bounds = new mapboxgl.LngLatBounds(
-      [points[0].lng, points[0].lat],
-      [points[0].lng, points[0].lat],
-    );
-    points.slice(1).forEach((pt) => bounds.extend([pt.lng, pt.lat]));
-    map.current.fitBounds(bounds, { padding: 80, duration: 800, maxZoom: 17.5 });
-  }, [isMapReady, markerDescriptors, defaultCoordinates]);
+      if (points.length === 0) return;
+
+      if (points.length === 1) {
+        map.current.flyTo({
+          center: [points[0].lng, points[0].lat],
+          zoom: Math.max(map.current.getZoom() ?? 0, 16),
+          duration: withAnimation ? 600 : 0,
+        });
+        return;
+      }
+
+      const bounds = new mapboxgl.LngLatBounds(
+        [points[0].lng, points[0].lat],
+        [points[0].lng, points[0].lat],
+      );
+      points.slice(1).forEach((pt) => bounds.extend([pt.lng, pt.lat]));
+      map.current.fitBounds(bounds, { padding: 80, duration: withAnimation ? 800 : 0, maxZoom: 17.5 });
+    },
+    [isMapReady, markerDescriptors, defaultCoordinates],
+  );
+
+  useEffect(() => {
+    if (shouldAutoFit) {
+      fitToAllPoints();
+    }
+  }, [shouldAutoFit, fitToAllPoints]);
 
   // อัพเดทตำแหน่ง popup เมื่อแผนที่เลื่อนหรือ zoom
   useEffect(() => {
@@ -846,10 +870,23 @@ const MapComponent = ({
     const updateCardPosition = () => {
       if (selectedMarkerRef.current) {
         const rect = selectedMarkerRef.current.getBoundingClientRect();
-        setCardPosition({
-          x: rect.left + rect.width / 2,
-          y: rect.top,
-        });
+        let x = rect.left + rect.width / 2;
+        let y = rect.top;
+        const popupEl = popupRef.current;
+        if (popupEl) {
+          const popupRect = popupEl.getBoundingClientRect();
+          const margin = 12;
+          if (x - popupRect.width / 2 < margin) {
+            x = popupRect.width / 2 + margin;
+          }
+          if (x + popupRect.width / 2 > window.innerWidth - margin) {
+            x = window.innerWidth - popupRect.width / 2 - margin;
+          }
+          if (y - popupRect.height < margin) {
+            y = popupRect.height + margin;
+          }
+        }
+        setCardPosition({ x, y });
       }
     };
 
@@ -948,7 +985,7 @@ const MapComponent = ({
                 }}
                 sx={{ width: '100%' }}
               />
-              <Stack direction="row" spacing={1}>
+              <Stack direction="row" spacing={1} flexWrap="wrap">
                 <Button
                   variant="contained"
                   size="small"
@@ -960,7 +997,16 @@ const MapComponent = ({
                 <Button variant="outlined" size="small" onClick={handleRecenter} sx={{ textTransform: 'none' }}>
                   Re-center
                 </Button>
+                <Button variant="outlined" size="small" onClick={handleResetView} sx={{ textTransform: 'none' }}>
+                  Reset view
+                </Button>
               </Stack>
+
+              {defaultCoordinates && (
+                <Typography variant="caption" color="text.secondary">
+                  Default marker: lat {defaultCoordinates.lat.toFixed(5)} • lng {defaultCoordinates.lng.toFixed(5)}
+                </Typography>
+              )}
 
               {searchFeedback && (
                 <Typography
@@ -1033,6 +1079,7 @@ const MapComponent = ({
       {/* Detection Popup */}
       {selectedObject && cardPosition && (
         <Box
+          ref={popupRef}
           sx={{
             position: 'fixed',
             left: cardPosition.x,
@@ -1040,6 +1087,7 @@ const MapComponent = ({
             transform: 'translate(-50%, -100%)',
             zIndex: 9999,
             mb: 1,
+            maxWidth: '90vw',
           }}
         >
           {/* ปุ่มปิด popup */}

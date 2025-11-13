@@ -353,19 +353,6 @@ const DefensiveAlertPanel = ({
             </Button>
           </Stack>
         </Stack>
-        <Paper variant="outlined" sx={{ p: 1 }}>
-          {defaultLocation ? (
-            <>
-              <Typography variant="subtitle2">Default marker location</Typography>
-              <Typography variant="body2">Lat: {defaultLocation.lat.toFixed(5)}</Typography>
-              <Typography variant="body2">Lng: {defaultLocation.lng.toFixed(5)}</Typography>
-            </>
-          ) : (
-            <Typography variant="body2" color="text.secondary">
-              Default marker not set.
-            </Typography>
-          )}
-        </Paper>
       </Stack>
     </Panel>
   );
