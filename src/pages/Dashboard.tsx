@@ -564,8 +564,8 @@ const DetectionFeedPanel = ({
               variant="fullWidth"
               sx={{ minHeight: 0 }}
             >
-              <Tab label="Detection" value="feed" />
               <Tab label="Latest Image" value="latest" />
+              <Tab label="Detection" value="feed" />
             </Tabs>
           </Box>
 
@@ -613,15 +613,23 @@ const HistoryPanel = ({
   events,
   enableDetails = false,
   onShowDetail,
+  camId,
+  token,
+  onCleared,
 }: {
   title?: string;
   events: DetectionEvent[];
   enableDetails?: boolean;
   onShowDetail?: (event: DetectionEvent) => void;
+  camId?: string;
+  token?: string;
+  onCleared?: () => void;
 }) => {
   const [expandedId, setExpandedId] = useState<number | null>(null);
   const [startDate, setStartDate] = useState<Dayjs | null>(null);
   const [endDate, setEndDate] = useState<Dayjs | null>(null);
+  const [isClearing, setIsClearing] = useState(false);
+  const [clearStatus, setClearStatus] = useState<{ type: 'success' | 'error'; message: string } | null>(null);
 
   const filteredEvents = useMemo(() => {
     const startTime = startDate ? startDate.startOf('day').valueOf() : null;
@@ -647,14 +655,62 @@ const HistoryPanel = ({
   };
 
   const detailReady = enableDetails && Boolean(onShowDetail);
+  const canClear = Boolean(camId && token);
+
+  const handleClearLogs = async () => {
+    if (!camId || !token) return;
+    setIsClearing(true);
+    setClearStatus(null);
+    try {
+      const response = await fetch(
+        `${API_BASE_URL}/api/object-detection/clear/${camId}`,
+        {
+          method: 'DELETE',
+          headers: {
+            'x-camera-token': token,
+          },
+        }
+      );
+
+      if (!response.ok) {
+        const text = await response.text();
+        throw new Error(text || 'Failed to clear history');
+      }
+
+      setClearStatus({ type: 'success', message: 'History cleared successfully.' });
+      onCleared?.();
+    } catch (error) {
+      setClearStatus({
+        type: 'error',
+        message: error instanceof Error ? error.message : 'Failed to clear history',
+      });
+    } finally {
+      setIsClearing(false);
+    }
+  };
+
 
   return (
     <Panel>
       <Stack spacing={2} sx={{ height: '100%' }}>
         {title && (
-          <Typography variant="subtitle2" fontWeight={600}>
-            {title}
-          </Typography>
+          <Stack direction="row" alignItems="center" justifyContent="space-between">
+            <Typography variant="subtitle2" fontWeight={600}>
+              {title}
+            </Typography>
+            {canClear && (
+              <Button
+                size="small"
+                variant="outlined"
+                onClick={handleClearLogs}
+                disabled={isClearing}
+                startIcon={<Icon icon="mdi:delete-outline" width={16} />}
+                sx={{ textTransform: 'none' }}
+              >
+                {isClearing ? 'Clearing...' : 'Clear'}
+              </Button>
+            )}
+          </Stack>
         )}
 
         <Stack spacing={1}>
@@ -675,6 +731,8 @@ const HistoryPanel = ({
             />
           </Stack>
         </Stack>
+
+        {clearStatus && <Alert severity={clearStatus.type}>{clearStatus.message}</Alert>}
 
         <Box sx={{ flexGrow: 1, overflowY: 'auto' }}>
           {filteredEvents.length === 0 ? (
@@ -902,6 +960,8 @@ const DashboardPage = () => {
                 events={defensiveFeed.events}
                 enableDetails
                 onShowDetail={setDetailDetection}
+                camId={droneProfiles.defensive.camId}
+                token={droneProfiles.defensive.token}
               />
             </Grid>
           </Grid>
@@ -934,7 +994,12 @@ const DashboardPage = () => {
 
 
             <Grid size={{ xs: 12, md: 6, lg: 2 }} sx={{ height: '100%', minHeight: 0 }}>
-              <HistoryPanel title="Filter by Date" events={offensiveFeed.events} />
+              <HistoryPanel
+                title="Filter by Date"
+                events={offensiveFeed.events}
+                camId={droneProfiles.offensive.camId}
+                token={droneProfiles.offensive.token}
+              />
             </Grid>
           </Grid>
         </Box>
