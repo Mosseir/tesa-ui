@@ -1,0 +1,738 @@
+﻿import { useEffect, useMemo, useState, type ReactNode } from 'react';
+import {
+  Alert,
+  Box,
+  Button,
+  Chip,
+  CircularProgress,
+  Collapse,
+  Container,
+  Dialog,
+  DialogActions,
+  DialogContent,
+  DialogTitle,
+  Divider,
+  List,
+  ListItem,
+  ListItemButton,
+  ListItemText,
+  Paper,
+  Stack,
+  Grid,
+  Typography,
+} from '@mui/material';
+import { LocalizationProvider } from '@mui/x-date-pickers/LocalizationProvider';
+import { AdapterDayjs } from '@mui/x-date-pickers/AdapterDayjs';
+import { DatePicker } from '@mui/x-date-pickers/DatePicker';
+import dayjs, { type Dayjs } from 'dayjs';
+import { Icon } from '@iconify/react';
+import { alpha } from '@mui/material/styles';
+import MapComponent from '../components/MapComponent';
+import DetectionCard from '../components/DetectionCard';
+import ImageViewer from '../components/ImageViewer';
+import { useDetections } from '../hooks/useDetections';
+import { useSocket } from '../hooks/useSocket';
+import { droneProfiles } from '../config/droneProfiles';
+import { type DetectionEvent, type DetectedObject } from '../types/detection';
+
+type UseDroneFeedResult = {
+  events: DetectionEvent[];
+  isLoading: boolean;
+  error: unknown;
+  isConnected: boolean;
+};
+
+type LatestObjectEntry = {
+  object: DetectedObject;
+  lastSeen: string;
+};
+
+const useDroneFeed = (camId: string, token: string): UseDroneFeedResult => {
+  const [events, setEvents] = useState<DetectionEvent[]>([]);
+  const isReady = Boolean(camId && token);
+
+  const { data, isLoading, error } = useDetections(camId, token, isReady);
+  const { realtimeData, isConnected } = useSocket(camId, isReady);
+
+  useEffect(() => {
+    if (data?.data) setEvents(data.data);
+  }, [data]);
+
+  useEffect(() => {
+    if (realtimeData) setEvents((prev) => [realtimeData, ...prev]);
+  }, [realtimeData]);
+
+  return { events, isLoading, error, isConnected };
+};
+
+const buildLatestObjects = (events: DetectionEvent[]): LatestObjectEntry[] => {
+  const map = new Map<string, LatestObjectEntry>();
+
+  events.forEach((event) => {
+    event.objects?.forEach((obj) => {
+      map.set(obj.obj_id, { object: obj, lastSeen: event.timestamp });
+    });
+  });
+
+  return Array.from(map.values()).sort(
+    (a, b) => new Date(b.lastSeen).getTime() - new Date(a.lastSeen).getTime(),
+  );
+};
+
+const API_BASE_URL = import.meta.env.VITE_API_BASE_URL?.replace('/api', '') ?? '';
+
+const getDetectionImageUrl = (imagePath?: string | null) => {
+  if (!imagePath || !API_BASE_URL) return null;
+  return `${API_BASE_URL}${imagePath}`;
+};
+
+const DetectionDetailDialog = ({
+  detection,
+  onClose,
+  title = 'Detection detail',
+}: {
+  detection: DetectionEvent | null;
+  onClose: () => void;
+  title?: string;
+}) => {
+  const imageUrl = detection ? getDetectionImageUrl(detection.image_path) : null;
+
+  return (
+    <Dialog open={Boolean(detection)} onClose={onClose} fullWidth maxWidth="md">
+      <DialogTitle>{title}</DialogTitle>
+      <DialogContent dividers>
+        {detection && (
+          <Stack spacing={2}>
+            {imageUrl && (
+              <ImageViewer
+                src={imageUrl}
+                alt="Detection preview"
+                height={240}
+                objectFit="cover"
+                style={{ borderRadius: 8 }}
+              />
+            )}
+
+            <Stack direction={{ xs: 'column', sm: 'row' }} spacing={2}>
+              <Box sx={{ flex: 1 }}>
+                <Typography variant="caption" color="text.secondary">
+                  Timestamp
+                </Typography>
+                <Typography variant="body2" fontWeight={600}>
+                  {new Date(detection.timestamp).toLocaleString()}
+                </Typography>
+              </Box>
+              <Box sx={{ flex: 1 }}>
+                <Typography variant="caption" color="text.secondary">
+                  Camera
+                </Typography>
+                <Typography variant="body2" fontWeight={600}>
+                  {detection.camera?.name ?? detection.cam_id}
+                </Typography>
+              </Box>
+            </Stack>
+
+            <Divider />
+
+            <Box>
+              <Typography variant="subtitle2" gutterBottom>
+                Detected drones ({detection.objects.length})
+              </Typography>
+              <Stack spacing={1}>
+                {detection.objects.map((obj) => (
+                  <Box
+                    key={obj.obj_id}
+                    sx={{
+                      p: 1,
+                      borderRadius: 1,
+                      border: '1px solid',
+                      borderColor: 'divider',
+                    }}
+                  >
+                    <Typography variant="body2" fontWeight={600}>
+                      {obj.type} - {obj.obj_id}
+                    </Typography>
+                    <Typography variant="caption" color="text.secondary" display="block">
+                      Objective: {obj.objective} - Size: {obj.size}
+                    </Typography>
+                    <Typography variant="caption" color="text.secondary" display="block">
+                      Lat: {typeof obj.lat === 'number' ? obj.lat.toFixed(6) : obj.lat} - Lng:{' '}
+                      {typeof obj.lng === 'number' ? obj.lng.toFixed(6) : obj.lng}
+                    </Typography>
+                  </Box>
+                ))}
+              </Stack>
+            </Box>
+          </Stack>
+        )}
+      </DialogContent>
+      <DialogActions>
+        <Button onClick={onClose}>Close</Button>
+      </DialogActions>
+    </Dialog>
+  );
+};
+
+const Panel = ({ title, children }: { title?: string; children: ReactNode }) => (
+  <Paper
+    sx={{
+      p: 2,
+      height: '100%',
+      display: 'flex',
+      flexDirection: 'column',
+      minHeight: 0,
+      overflow: 'hidden',
+    }}
+  >
+    {title && (
+      <Typography variant="h6" gutterBottom>
+        {title}
+      </Typography>
+    )}
+    <Box sx={{ flexGrow: 1, minHeight: 0 }}>{children}</Box>
+  </Paper>
+);
+
+const DefensiveAlertPanel = ({ feed }: { feed: UseDroneFeedResult }) => {
+  const errorMessage = feed.error ? (feed.error instanceof Error ? feed.error.message : String(feed.error)) : null;
+  const latest = feed.events[0];
+
+  return (
+    <Panel title="Defensive Alert Box">
+      <Stack spacing={2} sx={{ height: '100%' }}>
+        <Stack direction="row" spacing={1} flexWrap="wrap">
+          <Chip
+            icon={<Icon icon={feed.isConnected ? 'mdi:check-circle' : 'mdi:close-circle'} />}
+            label={feed.isConnected ? 'Socket Connected' : 'Socket Down'}
+            color={feed.isConnected ? 'success' : 'error'}
+            size="small"
+          />
+          <Chip
+            icon={<Icon icon={feed.error ? 'mdi:close-circle' : 'mdi:check-circle'} />}
+            label={feed.error ? 'API Error' : 'API Ready'}
+            color={feed.error ? 'error' : 'success'}
+            size="small"
+          />
+          <Chip icon={<Icon icon="mdi:database" />} label={`Events: ${feed.events.length}`} size="small" />
+        </Stack>
+
+        {errorMessage ? (
+          <Alert severity="error">{errorMessage}</Alert>
+        ) : latest ? (
+          <Alert severity="success">Last detection: {new Date(latest.timestamp).toLocaleString()}</Alert>
+        ) : (
+          <Alert severity="info">Awaiting defensive detections...</Alert>
+        )}
+
+        <Box sx={{ border: '1px dashed', borderRadius: 1, borderColor: 'divider', flexGrow: 1, p: 2 }}>
+          <Typography variant="body2" color="text.secondary" align='center'>
+            No unauthorized drones detected in the area.
+          </Typography>
+        </Box>
+      </Stack>
+    </Panel>
+  );
+};
+
+const MapPanel = ({
+  title,
+  event,
+  defaultCameraLocation,
+  focusPoint,
+  objects,
+}: {
+  title?: string;
+  event?: DetectionEvent;
+  defaultCameraLocation?: string;
+  focusPoint?: { lat: number; lng: number } | null;
+  objects?: DetectedObject[];
+}) => {
+  const displayedObjects = objects ?? event?.objects ?? [];
+  const hasObjects = displayedObjects.length > 0;
+  const cameraLocation = event?.camera?.location ?? defaultCameraLocation;
+
+  return (
+    <Panel>
+      <Box sx={{ position: 'relative', height: '100%' }}>
+        {title && (
+          <Box
+            sx={{
+              position: 'absolute',
+              top: 12,
+              left: 12,
+              zIndex: 2,
+              px: 1.5,
+              py: 0.5,
+              borderRadius: 1,
+              bgcolor: (theme) => alpha(theme.palette.background.paper, 0.85),
+              boxShadow: 1,
+            }}
+          >
+            <Typography variant="subtitle2" fontWeight={600}>
+              {title}
+            </Typography>
+          </Box>
+        )}
+
+        <MapComponent
+          objects={displayedObjects}
+          imagePath={event?.image_path}
+          cameraLocation={cameraLocation}
+          focusPoint={focusPoint}
+        />
+
+        {!hasObjects && (
+          <Box
+            sx={{
+              position: 'absolute',
+              bottom: 16,
+              left: 16,
+              px: 2,
+              py: 1,
+              borderRadius: 1,
+              bgcolor: (theme) => alpha(theme.palette.common.black, 0.65),
+            }}
+          >
+            <Typography variant="body2" color="common.white">
+              Awaiting live detections...
+            </Typography>
+          </Box>
+        )}
+      </Box>
+    </Panel>
+  );
+};
+
+const DetectionSummaryModule = ({
+  detection,
+  onSelect,
+}: {
+  detection: DetectionEvent;
+  onSelect: (event: DetectionEvent) => void;
+}) => {
+  const previewTypes = detection.objects.slice(0, 2).map((obj) => obj.type).join(', ');
+  const timestamp = new Date(detection.timestamp).toLocaleString();
+
+  return (
+    <Paper
+      variant="outlined"
+      onClick={() => onSelect(detection)}
+      sx={{
+        p: 1.5,
+        borderRadius: 1,
+        cursor: 'pointer',
+        transition: 'border-color 0.2s, box-shadow 0.2s',
+        '&:hover': {
+          borderColor: 'primary.main',
+          boxShadow: 2,
+        },
+      }}
+    >
+      <Stack spacing={0.75}>
+        <Stack direction="row" spacing={1} alignItems="center">
+          <Icon icon="mdi:clock-outline" width={18} />
+          <Typography variant="caption" color="text.secondary">
+            {timestamp}
+          </Typography>
+        </Stack>
+        <Stack direction="row" spacing={1} alignItems="center" flexWrap="wrap">
+          <Chip icon={<Icon icon="mdi:drone" />} label={`${detection.objects.length} drones`} size="small" />
+          <Chip
+            icon={<Icon icon="mdi:camera" />}
+            label={detection.camera?.name ?? detection.cam_id.slice(0, 8)}
+            size="small"
+            variant="outlined"
+          />
+        </Stack>
+        {previewTypes && (
+          <Typography variant="caption" color="text.secondary">
+            Types: {previewTypes}
+          </Typography>
+        )}
+        <Typography variant="caption" color="primary.main">
+          Tap to view details
+        </Typography>
+      </Stack>
+    </Paper>
+  );
+};
+
+const DetectionFeedPanel = ({
+  feed,
+  title,
+  compact = false,
+  onShowDetail,
+}: {
+  feed: UseDroneFeedResult;
+  title: string;
+  compact?: boolean;
+  onShowDetail?: (detection: DetectionEvent) => void;
+}) => {
+  const errorMessage = feed.error ? (feed.error instanceof Error ? feed.error.message : String(feed.error)) : null;
+  const [localDetail, setLocalDetail] = useState<DetectionEvent | null>(null);
+
+  const shouldUseLocalDialog = !onShowDetail;
+  const detailDetection = shouldUseLocalDialog ? localDetail : null;
+
+  const handleOpenDetail = (detection: DetectionEvent) => {
+    if (onShowDetail) onShowDetail(detection);
+    else setLocalDetail(detection);
+  };
+
+  const handleCloseDetail = () => setLocalDetail(null);
+
+  return (
+    <Panel title={title}>
+      {feed.isLoading && (
+        <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '100%' }}>
+          <CircularProgress size={28} />
+        </Box>
+      )}
+
+      {!feed.isLoading && errorMessage && <Alert severity="error">{errorMessage}</Alert>}
+
+      {!feed.isLoading && !errorMessage && feed.events.length === 0 && (
+        <Alert severity="info">Waiting for detections...</Alert>
+      )}
+
+      {!feed.isLoading && !errorMessage && feed.events.length > 0 && (
+        <>
+          <Box sx={{ height: '100%', overflowY: 'auto', pr: 1 }}>
+            <Stack spacing={compact ? 1.5 : 2}>
+              {feed.events.map((event) =>
+                compact ? (
+                  <DetectionSummaryModule key={`${title}-${event.id}`} detection={event} onSelect={handleOpenDetail} />
+                ) : (
+                  <DetectionCard key={`${title}-${event.id}`} detection={event} />
+                ),
+              )}
+            </Stack>
+          </Box>
+
+          {shouldUseLocalDialog && (
+            <DetectionDetailDialog detection={detailDetection} onClose={handleCloseDetail} />
+          )}
+        </>
+      )}
+    </Panel>
+  );
+};
+
+const HistoryPanel = ({
+  title,
+  events,
+  enableDetails = false,
+  onShowDetail,
+}: {
+  title?: string;
+  events: DetectionEvent[];
+  enableDetails?: boolean;
+  onShowDetail?: (event: DetectionEvent) => void;
+}) => {
+  const [expandedId, setExpandedId] = useState<number | null>(null);
+  const [startDate, setStartDate] = useState<Dayjs | null>(null);
+  const [endDate, setEndDate] = useState<Dayjs | null>(null);
+
+  const filteredEvents = useMemo(() => {
+    const startTime = startDate ? startDate.startOf('day').valueOf() : null;
+    const endTime = endDate ? endDate.endOf('day').valueOf() : null;
+
+    return [...events]
+      .filter((event) => {
+        const eventTime = dayjs(event.timestamp).valueOf();
+        if (startTime !== null && eventTime < startTime) return false;
+        if (endTime !== null && eventTime > endTime) return false;
+        return true;
+      })
+      .sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime());
+  }, [events, startDate, endDate]);
+
+  const handleToggle = (id: number) => {
+    setExpandedId((prev) => (prev === id ? null : id));
+  };
+
+  const handleDetailRequest = (event: DetectionEvent) => {
+    if (!enableDetails || !onShowDetail) return;
+    onShowDetail(event);
+  };
+
+  const detailReady = enableDetails && Boolean(onShowDetail);
+
+  return (
+    <Panel>
+      <Stack spacing={2} sx={{ height: '100%' }}>
+        {title && (
+          <Typography variant="subtitle2" fontWeight={600}>
+            {title}
+          </Typography>
+        )}
+
+        <Stack direction="row" spacing={1} flexWrap="wrap">
+          <DatePicker label="Start date" value={startDate} onChange={(value) => setStartDate(value)} slotProps={{ textField: { size: 'small' } }} sx={{ minWidth: 140 }} />
+          <DatePicker label="End date" value={endDate} onChange={(value) => setEndDate(value)} slotProps={{ textField: { size: 'small' } }} sx={{ minWidth: 140 }} />
+        </Stack>
+
+        <Box sx={{ flexGrow: 1, overflowY: 'auto' }}>
+          {filteredEvents.length === 0 ? (
+            <Alert severity="info">No history logs captured in this range.</Alert>
+          ) : (
+            <List dense>
+              {filteredEvents.map((event) => {
+                const isExpanded = expandedId === event.id;
+                return (
+                  <Box
+                    key={`${title ?? 'history'}-${event.id}`}
+                    sx={{ borderBottom: '1px solid', borderColor: 'divider' }}
+                  >
+                    <ListItem disableGutters disablePadding>
+                      <ListItemButton
+                        onClick={() => handleToggle(event.id)}
+                        sx={{ py: 1, display: 'flex', alignItems: 'flex-start', gap: 1 }}
+                      >
+                        <ListItemText
+                          primary={new Date(event.timestamp).toLocaleString()}
+                          secondary={`${event.objects.length} objects detected`}
+                        />
+                        <Icon icon={isExpanded ? 'mdi:chevron-up' : 'mdi:chevron-down'} width={18} />
+                      </ListItemButton>
+                    </ListItem>
+                    <Collapse in={isExpanded} timeout="auto" unmountOnExit>
+                      <Box sx={{ pl: 2, pr: 1, pb: 1 }}>
+                        {event.objects.map((obj) => (
+                          <Box
+                            key={obj.obj_id}
+                            sx={{
+                              mb: 1,
+                              p: 0.5,
+                              borderRadius: 1,
+                              transition: 'background-color 0.2s',
+                              cursor: detailReady ? 'pointer' : 'default',
+                              '&:hover': detailReady ? { backgroundColor: 'action.hover' } : undefined,
+                            }}
+                            onClick={() => detailReady && handleDetailRequest(event)}
+                          >
+                            <Typography variant="body2" fontWeight={600}>
+                              {obj.type} - {obj.obj_id}
+                            </Typography>
+                            <Typography variant="caption" color="text.secondary" display="block">
+                              Objective: {obj.objective} - Size: {obj.size}
+                            </Typography>
+                            <Typography variant="caption" color="text.secondary" display="block">
+                              Lat: {typeof obj.lat === 'number' ? obj.lat.toFixed(6) : obj.lat} - Lng:{' '}
+                              {typeof obj.lng === 'number' ? obj.lng.toFixed(6) : obj.lng}
+                            </Typography>
+                          </Box>
+                        ))}
+                      </Box>
+                    </Collapse>
+                  </Box>
+                );
+              })}
+            </List>
+          )}
+        </Box>
+      </Stack>
+    </Panel>
+  );
+};
+const DroneListPanel = ({
+  feed,
+  latestObjects,
+  onSelect,
+  selectedId,
+}: {
+  feed: UseDroneFeedResult;
+  latestObjects: LatestObjectEntry[];
+  onSelect?: (object: DetectedObject) => void;
+  selectedId?: string | null;
+}) => {
+  const errorMessage = feed.error ? (feed.error instanceof Error ? feed.error.message : String(feed.error)) : null;
+
+  return (
+    <Panel title="Drone List">
+      <Stack spacing={1.5} sx={{ mb: 1 }}>
+        <Stack direction="row" spacing={1} flexWrap="wrap">
+          <Chip
+            icon={<Icon icon={feed.isConnected ? 'mdi:check-circle' : 'mdi:close-circle'} />}
+            label={feed.isConnected ? 'Socket Connected' : 'Socket Down'}
+            color={feed.isConnected ? 'success' : 'error'}
+            size="small"
+          />
+          <Chip
+            icon={<Icon icon={errorMessage ? 'mdi:close-circle' : 'mdi:check-circle'} />}
+            label={errorMessage ? 'API Error' : 'API Ready'}
+            color={errorMessage ? 'error' : 'success'}
+            size="small"
+          />
+          <Chip icon={<Icon icon="mdi:database" />} label={`Objects: ${latestObjects.length}`} size="small" />
+        </Stack>
+        <Typography variant="caption" color="text.secondary">
+          Tap a drone to center the offensive map.
+        </Typography>
+      </Stack>
+
+      {latestObjects.length === 0 ? (
+        <Alert severity="info">No deployed drones in the feed yet.</Alert>
+      ) : (
+        <List dense sx={{ height: '100%', overflowY: 'auto' }}>
+          {latestObjects.map(({ object, lastSeen }) => {
+            const isSelected = selectedId === object.obj_id;
+            return (
+              <ListItem key={object.obj_id} disablePadding>
+                <ListItemButton
+                  onClick={() => onSelect?.(object)}
+                  selected={isSelected}
+                  sx={{
+                    alignItems: 'flex-start',
+                    borderBottom: '1px solid',
+                    borderColor: 'divider',
+                    '&.Mui-selected': {
+                      bgcolor: (theme) => alpha(theme.palette.primary.main, 0.08),
+                    },
+                  }}
+                >
+                  <ListItemText
+                    primary={`${object.type} - ${object.obj_id}`}
+                    secondary={`Objective: ${object.objective} - Last seen: ${new Date(lastSeen).toLocaleString()}`}
+                  />
+                </ListItemButton>
+              </ListItem>
+            );
+          })}
+        </List>
+      )}
+    </Panel>
+  );
+};
+const DashboardPage = () => {
+  const defensiveFeed = useDroneFeed(droneProfiles.defensive.camId, droneProfiles.defensive.token);
+  const offensiveFeed = useDroneFeed(droneProfiles.offensive.camId, droneProfiles.offensive.token);
+
+  const defensiveLatest = defensiveFeed.events[0];
+  const offensiveLatest = offensiveFeed.events[0];
+
+  const defensiveObjects = useMemo(() => buildLatestObjects(defensiveFeed.events), [defensiveFeed.events]);
+  const offensiveObjects = useMemo(() => buildLatestObjects(offensiveFeed.events), [offensiveFeed.events]);
+
+  const [offensiveFocus, setOffensiveFocus] = useState<{ lat: number; lng: number } | null>(null);
+  const [selectedDroneId, setSelectedDroneId] = useState<string | null>(null);
+  const [detailDetection, setDetailDetection] = useState<DetectionEvent | null>(null);
+
+  const handleDroneSelect = (object: DetectedObject) => {
+    const lat = typeof object.lat === 'number' ? object.lat : parseFloat(String(object.lat));
+    const lng = typeof object.lng === 'number' ? object.lng : parseFloat(String(object.lng));
+    if (!Number.isFinite(lat) || !Number.isFinite(lng)) return;
+
+    setOffensiveFocus({ lat, lng });
+    setSelectedDroneId(object.obj_id);
+  };
+
+  const handleCloseDetail = () => setDetailDetection(null);
+
+  return (
+    <LocalizationProvider dateAdapter={AdapterDayjs}>
+      <Container
+        maxWidth={false}
+        disableGutters
+        sx={{
+          height: '100vh',
+          width: '100vw',
+          maxWidth: '100vw',
+          boxSizing: 'border-box',
+          py: 2,
+          px: 2,
+          display: 'flex',
+          flexDirection: 'column',
+          overflow: 'hidden',
+        }}
+      >
+        <Box
+          sx={{
+            flexGrow: 1,
+            display: 'grid',
+            gridTemplateRows: 'repeat(2, minmax(0, 1fr))',
+            gap: '8px',
+            minHeight: 0,
+          }}
+        >
+          {/* ---------- Defensive (3:5:2:2) ---------- */}
+          <Grid
+            container
+            spacing={1}
+            columns={12}
+            sx={{ minHeight: 0, height: '100%', overflow: 'hidden' }}
+          >
+            <Grid size={{ xs: 12, md: 6, lg: 2 }} sx={{ height: '100%', minHeight: 0 }}>
+              <DefensiveAlertPanel feed={defensiveFeed} />
+            </Grid>
+
+            <Grid size={{ xs: 12, md: 6, lg: 6 }} sx={{ height: '100%', minHeight: 0 }}>
+              <MapPanel
+                title="Defensive Map"
+                event={defensiveLatest}
+                defaultCameraLocation="defence"
+                objects={defensiveObjects.map(({ object }) => object)}
+              />
+            </Grid>
+
+            <Grid size={{ xs: 12, md: 6, lg: 2 }} sx={{ height: '100%', minHeight: 0 }}>
+              <DetectionFeedPanel
+                feed={defensiveFeed}
+                title="Defensive Detection Feed"
+                compact
+                onShowDetail={setDetailDetection}
+              />
+            </Grid>
+
+            <Grid size={{ xs: 12, md: 6, lg: 2 }} sx={{ height: '100%', minHeight: 0 }}>
+              <HistoryPanel
+                title="Defensive History"
+                events={defensiveFeed.events}
+                enableDetails
+                onShowDetail={setDetailDetection}
+              />
+            </Grid>
+          </Grid>
+
+          {/* ---------- Offensive (3:6:3) ---------- */}
+          <Grid
+            container
+            spacing={1}
+            columns={12}
+            sx={{ minHeight: 0, height: '100%', overflow: 'hidden' }}
+          >
+            <Grid size={{ xs: 12, md: 6, lg: 2 }} sx={{ height: '100%', minHeight: 0 }}>
+              <DroneListPanel
+                feed={offensiveFeed}
+                latestObjects={offensiveObjects}
+                onSelect={handleDroneSelect}
+                selectedId={selectedDroneId}
+              />
+            </Grid>
+
+            <Grid size={{ xs: 12, md: 6, lg: 8 }} sx={{ height: '100%', minHeight: 0 }}>
+              <MapPanel
+                title="Offensive Map"
+                event={offensiveLatest}
+                defaultCameraLocation="offence"
+                focusPoint={offensiveFocus}
+                objects={offensiveObjects.map(({ object }) => object)}
+              />
+            </Grid>
+
+            <Grid size={{ xs: 12, md: 6, lg: 2 }} sx={{ height: '100%', minHeight: 0 }}>
+              <HistoryPanel title="Offensive History" events={offensiveFeed.events} />
+            </Grid>
+          </Grid>
+        </Box>
+
+        <DetectionDetailDialog detection={detailDetection} onClose={handleCloseDetail} />
+      </Container>
+    </LocalizationProvider>
+  );
+};
+export default DashboardPage;
+
+
+
+

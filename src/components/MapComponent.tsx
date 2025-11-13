@@ -3,9 +3,9 @@
  * คลิก marker เพื่อแสดงรายละเอียดใน popup
  */
 
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import mapboxgl from 'mapbox-gl';
-import { Box, IconButton } from '@mui/material';
+import { Box, Button, IconButton, TextField, Typography } from '@mui/material';
 import { Icon } from '@iconify/react';
 import { type DetectedObject } from '../types/detection';
 import DetectionPopup from './DetectionPopup';
@@ -30,16 +30,104 @@ interface MapComponentProps {
   objects: DetectedObject[];
   imagePath?: string;
   cameraLocation?: string;
+  focusPoint?: { lat: number; lng: number } | null;
 }
 
-const MapComponent = ({ objects, imagePath, cameraLocation }: MapComponentProps) => {
+type MarkerDescriptor =
+  | {
+      type: 'single';
+      lat: number;
+      lng: number;
+      object: DetectedObject;
+    }
+  | {
+      type: 'cluster';
+      lat: number;
+      lng: number;
+      objects: DetectedObject[];
+    };
+
+const toNumber = (value: number | string): number => (typeof value === 'number' ? value : parseFloat(value));
+
+const distanceBetween = (lat1: number, lng1: number, lat2: number, lng2: number) => {
+  const dLat = lat1 - lat2;
+  const dLng = lng1 - lng2;
+  return Math.sqrt(dLat * dLat + dLng * dLng);
+};
+
+const getMarkerDescriptors = (items: DetectedObject[], zoom: number): MarkerDescriptor[] => {
+  if (items.length === 0) return [];
+  if (zoom >= 15) {
+    return items
+      .map((object) => {
+        const lat = toNumber(object.lat);
+        const lng = toNumber(object.lng);
+        if (!Number.isFinite(lat) || !Number.isFinite(lng)) return null;
+        return {
+          type: 'single' as const,
+          lat,
+          lng,
+          object,
+        };
+      })
+      .filter(Boolean) as MarkerDescriptor[];
+  }
+
+  const tolerance = zoom >= 13 ? 0.002 : zoom >= 11 ? 0.004 : 0.01;
+  const clusters: Array<{ lat: number; lng: number; objects: DetectedObject[] }> = [];
+
+  items.forEach((object) => {
+    const lat = toNumber(object.lat);
+    const lng = toNumber(object.lng);
+    if (!Number.isFinite(lat) || !Number.isFinite(lng)) return;
+
+    const cluster = clusters.find((item) => distanceBetween(item.lat, item.lng, lat, lng) < tolerance);
+    if (cluster) {
+      cluster.objects.push(object);
+      const total = cluster.objects.length;
+      cluster.lat = cluster.lat + (lat - cluster.lat) / total;
+      cluster.lng = cluster.lng + (lng - cluster.lng) / total;
+    } else {
+      clusters.push({ lat, lng, objects: [object] });
+    }
+  });
+
+  return clusters.map((cluster) =>
+    cluster.objects.length === 1
+      ? {
+          type: 'single',
+          lat: cluster.lat,
+          lng: cluster.lng,
+          object: cluster.objects[0],
+        }
+      : {
+          type: 'cluster',
+          lat: cluster.lat,
+          lng: cluster.lng,
+          objects: cluster.objects,
+        },
+  );
+};
+
+const MapComponent = ({ objects, imagePath, cameraLocation, focusPoint }: MapComponentProps) => {
   const mapContainer = useRef<HTMLDivElement>(null);
   const map = useRef<mapboxgl.Map | null>(null);
   const markers = useRef<mapboxgl.Marker[]>([]);
   const selectedMarkerRef = useRef<HTMLDivElement | null>(null);
+  const defaultMarkerRef = useRef<mapboxgl.Marker | null>(null);
 
   const [selectedObject, setSelectedObject] = useState<DetectedObject | null>(null);
   const [cardPosition, setCardPosition] = useState<{ x: number; y: number } | null>(null);
+  const [currentZoom, setCurrentZoom] = useState(17);
+  const [defaultCoordinates, setDefaultCoordinates] = useState<{ lat: number; lng: number } | null>(null);
+  const [showDefaultInfo, setShowDefaultInfo] = useState(false);
+  const [searchValue, setSearchValue] = useState('');
+  const [searchFeedback, setSearchFeedback] = useState<{ type: 'success' | 'error'; message: string } | null>(null);
+
+  const markerDescriptors = useMemo(
+    () => getMarkerDescriptors(objects, currentZoom),
+    [objects, currentZoom],
+  );
 
   mapboxgl.accessToken = import.meta.env.VITE_MAPBOX_TOKEN;
 
@@ -80,11 +168,145 @@ const MapComponent = ({ objects, imagePath, cameraLocation }: MapComponentProps)
     return colors[index];
   };
 
+  const createOrUpdateDefaultMarker = () => {
+    if (!map.current) return;
+
+    const [lng, lat] = getMapCenter();
+    defaultMarkerRef.current?.remove();
+
+    const markerEl = document.createElement('div');
+    markerEl.className = 'default-location-marker';
+    markerEl.style.cssText = `
+      position: relative;
+      width: 28px;
+      height: 28px;
+      cursor: pointer;
+    `;
+
+    const core = document.createElement('div');
+    core.style.cssText = `
+      position: absolute;
+      top: 50%;
+      left: 50%;
+      width: 16px;
+      height: 16px;
+      border-radius: 50%;
+      transform: translate(-50%, -50%);
+      background-color: #1e88e5;
+      border: 2px solid #ffffff;
+      box-shadow: 0 2px 6px rgba(0,0,0,0.3);
+    `;
+
+    const pulse = document.createElement('div');
+    pulse.style.cssText = `
+      position: absolute;
+      width: 48px;
+      height: 48px;
+      border-radius: 50%;
+      top: 50%;
+      left: 50%;
+      transform: translate(-50%, -50%);
+      background-color: rgba(30, 136, 229, 0.35);
+      animation: pulse 2.4s ease-out infinite;
+      pointer-events: none;
+    `;
+
+    markerEl.appendChild(pulse);
+    markerEl.appendChild(core);
+
+    markerEl.addEventListener('click', (e) => {
+      e.stopPropagation();
+      setDefaultCoordinates({ lat, lng });
+      setShowDefaultInfo(true);
+      if (map.current) {
+        map.current.flyTo({
+          center: [lng, lat],
+          zoom: Math.max(map.current.getZoom() ?? 0, 17),
+          duration: 800,
+        });
+      }
+    });
+
+    defaultMarkerRef.current = new mapboxgl.Marker(markerEl).setLngLat([lng, lat]).addTo(map.current);
+    setDefaultCoordinates({ lat, lng });
+  };
+
+  const handleRecenter = () => {
+    if (!map.current) return;
+    const [lng, lat] = getMapCenter();
+    map.current.flyTo({
+      center: [lng, lat],
+      zoom: 17,
+      duration: 700,
+    });
+  };
+
+  const handleSearchLocation = async () => {
+    const query = searchValue.trim();
+    if (!query) {
+      setSearchFeedback({ type: 'error', message: 'Please enter a location.' });
+      return;
+    }
+
+    try {
+      const token = mapboxgl.accessToken;
+      if (!token) throw new Error('Missing Mapbox access token');
+
+      const response = await fetch(
+        `https://api.mapbox.com/geocoding/v5/mapbox.places/${encodeURIComponent(query)}.json?access_token=${token}&limit=1`,
+      );
+      if (!response.ok) throw new Error('Unable to search location');
+      const data = await response.json();
+      const feature = data.features?.[0];
+      if (!feature) {
+        setSearchFeedback({ type: 'error', message: 'Location not found.' });
+        return;
+      }
+
+      const [lng, lat] = feature.center;
+      map.current?.flyTo({
+        center: [lng, lat],
+        zoom: 16,
+        duration: 900,
+      });
+      setSearchFeedback({ type: 'success', message: feature.place_name ?? 'Location found.' });
+    } catch (error) {
+      setSearchFeedback({
+        type: 'error',
+        message: error instanceof Error ? error.message : 'Search failed.',
+      });
+    }
+  };
+
+  useEffect(() => {
+    if (!showDefaultInfo) return;
+    const timer = setTimeout(() => setShowDefaultInfo(false), 4000);
+    return () => clearTimeout(timer);
+  }, [showDefaultInfo]);
+
+  useEffect(() => {
+    if (!searchFeedback) return;
+    const timer = setTimeout(() => setSearchFeedback(null), 3500);
+    return () => clearTimeout(timer);
+  }, [searchFeedback]);
+
   const handleClose = () => {
     setSelectedObject(null);
     setCardPosition(null);
     selectedMarkerRef.current = null;
   };
+
+  useEffect(() => {
+    if (!selectedObject) return;
+
+    const stillVisible = markerDescriptors.some(
+      (descriptor) => descriptor.type === 'single' && descriptor.object.obj_id === selectedObject.obj_id,
+    );
+
+    if (!stillVisible) {
+      handleClose();
+    }
+  }, [markerDescriptors, selectedObject]);
 
   // สร้างแผนที่ (run ครั้งเดียวตอน mount)
   useEffect(() => {
@@ -97,7 +319,20 @@ const MapComponent = ({ objects, imagePath, cameraLocation }: MapComponentProps)
       zoom: 17,
     });
 
+    const handleZoomChange = () => {
+      if (map.current) setCurrentZoom(map.current.getZoom());
+    };
+
+    map.current.on('load', () => {
+      createOrUpdateDefaultMarker();
+      handleZoomChange();
+    });
+    map.current.on('zoomend', handleZoomChange);
+
     return () => {
+      map.current?.off('zoomend', handleZoomChange);
+      defaultMarkerRef.current?.remove();
+      defaultMarkerRef.current = null;
       map.current?.remove();
     };
   }, []);
@@ -111,25 +346,153 @@ const MapComponent = ({ objects, imagePath, cameraLocation }: MapComponentProps)
         duration: 1000,
       });
     }
+    createOrUpdateDefaultMarker();
   }, [cameraLocation]);
 
   // สร้าง markers สำหรับวัตถุทั้งหมด
   useEffect(() => {
+
     if (!map.current) return;
 
-    // ลบ markers เก่าทั้งหมด
+
+
+    const syncPopupPosition = (el: HTMLDivElement) => {
+
+      requestAnimationFrame(() => {
+
+        const rect = el.getBoundingClientRect();
+
+        setCardPosition({
+
+          x: rect.left + rect.width / 2,
+
+          y: rect.top,
+
+        });
+
+      });
+
+    };
+
+
+
     markers.current.forEach((marker) => marker.remove());
+
     markers.current = [];
 
-    if (objects.length === 0) return;
 
-    objects.forEach((obj) => {
+
+    if (markerDescriptors.length === 0) {
+
+      selectedMarkerRef.current = null;
+
+      setCardPosition(null);
+
+      return;
+
+    }
+
+
+
+    markerDescriptors.forEach((descriptor) => {
+
+      if (descriptor.type === 'cluster') {
+
+        const clusterEl = document.createElement('div');
+
+        clusterEl.className = 'cluster-marker';
+
+        clusterEl.style.cssText = `
+          width: 50px;
+          height: 50px;
+          border-radius: 50%;
+          background-color: rgba(25, 118, 210, 0.9);
+          color: white;
+          display: flex;
+          flex-direction: column;
+          align-items: center;
+          justify-content: center;
+          border: 3px solid #ffffff;
+          box-shadow: 0 4px 10px rgba(0,0,0,0.35);
+          cursor: pointer;
+          font-weight: 600;
+          gap: 2px;
+        `;
+
+        const count = document.createElement('div');
+
+        count.textContent = String(descriptor.objects.length);
+
+        count.style.fontSize = '15px';
+
+
+
+        const label = document.createElement('div');
+
+        label.textContent = 'objects';
+
+        label.style.fontSize = '9px';
+
+        label.style.fontWeight = '400';
+
+
+
+        clusterEl.appendChild(count);
+
+        clusterEl.appendChild(label);
+
+
+
+        clusterEl.addEventListener('click', (e) => {
+
+          e.stopPropagation();
+
+          if (!map.current) return;
+
+          const nextZoom = Math.min((map.current.getZoom() ?? 0) + 2, 19);
+
+          map.current.easeTo({
+
+            center: [descriptor.lng, descriptor.lat],
+
+            zoom: nextZoom,
+
+            duration: 600,
+
+          });
+
+        });
+
+
+
+        const clusterMarker = new mapboxgl.Marker(clusterEl)
+
+          .setLngLat([descriptor.lng, descriptor.lat])
+
+          .addTo(map.current!);
+
+
+
+        markers.current.push(clusterMarker);
+
+        return;
+
+      }
+
+
+
+      const obj = descriptor.object;
+
       const color = getColorForObjectId(obj.obj_id);
+
       const iconName = getIconName(obj.type);
 
-      // สร้าง DOM element สำหรับ marker
+
+
       const el = document.createElement('div');
+
       el.className = 'marker';
+
       el.style.cssText = `
         position: relative;
         width: 40px;
@@ -139,9 +502,10 @@ const MapComponent = ({ objects, imagePath, cameraLocation }: MapComponentProps)
         justify-content: center;
       `;
 
-      // วงกลม pulse animation
       const pulseCircle = document.createElement('div');
+
       pulseCircle.className = 'pulse-circle';
+
       pulseCircle.style.cssText = `
         position: absolute;
         width: 60px;
@@ -156,9 +520,10 @@ const MapComponent = ({ objects, imagePath, cameraLocation }: MapComponentProps)
         pointer-events: none;
       `;
 
-      // container สำหรับ icon
       const iconContainer = document.createElement('div');
+
       iconContainer.className = 'iconify-marker';
+
       iconContainer.style.cssText = `
         cursor: pointer;
         position: relative;
@@ -173,43 +538,81 @@ const MapComponent = ({ objects, imagePath, cameraLocation }: MapComponentProps)
         border: 3px solid ${color};
       `;
 
-      // icon element
       const iconElement = document.createElement('span');
+
       iconElement.className = 'iconify';
+
       iconElement.setAttribute('data-icon', iconName);
+
       iconElement.style.cssText = `
         color: ${color};
         font-size: 24px;
       `;
 
-      // ประกอบ DOM elements เข้าด้วยกัน
+
+
       iconContainer.appendChild(iconElement);
+
       el.appendChild(pulseCircle);
+
       el.appendChild(iconContainer);
 
-      // เมื่อคลิก marker
+
+
       el.addEventListener('click', (e) => {
+
         e.stopPropagation();
+
         setSelectedObject(obj);
+
         selectedMarkerRef.current = el;
 
         const rect = el.getBoundingClientRect();
-        setCardPosition({
-          x: rect.left + rect.width / 2,
-          y: rect.top,
-        });
-      });
 
-      const lat = typeof obj.lat === 'number' ? obj.lat : parseFloat(obj.lat);
-      const lng = typeof obj.lng === 'number' ? obj.lng : parseFloat(obj.lng);
+        setCardPosition({
+
+          x: rect.left + rect.width / 2,
+
+          y: rect.top,
+
+        });
+
+      });  
+
 
       const marker = new mapboxgl.Marker(el)
-        .setLngLat([lng, lat])
+
+        .setLngLat([descriptor.lng, descriptor.lat])
+
         .addTo(map.current!);
 
+
+
       markers.current.push(marker);
+
+
+
+      if (selectedObject?.obj_id === obj.obj_id) {
+
+        selectedMarkerRef.current = el;
+
+        syncPopupPosition(el);
+
+      }
+
     });
-  }, [objects, imagePath]);
+
+  }, [markerDescriptors, imagePath, selectedObject]);
+
+  useEffect(() => {
+    if (!map.current || !focusPoint) return;
+
+    map.current.flyTo({
+      center: [focusPoint.lng, focusPoint.lat],
+      zoom: Math.max(map.current.getZoom(), 17.5),
+      duration: 1200,
+    });
+  }, [focusPoint]);
 
   // อัพเดทตำแหน่ง popup เมื่อแผนที่เลื่อนหรือ zoom
   useEffect(() => {
@@ -266,6 +669,77 @@ const MapComponent = ({ objects, imagePath, cameraLocation }: MapComponentProps)
           overflow: 'hidden',
         }}
       />
+
+      <Box
+        sx={{
+          position: 'absolute',
+          top: 12,
+          left: 12,
+          zIndex: 2,
+          display: 'flex',
+          flexWrap: 'wrap',
+          gap: 1,
+          alignItems: 'center',
+          bgcolor: (theme) => theme.palette.background.paper,
+          borderRadius: 1,
+          boxShadow: 2,
+          p: 1.5,
+          minWidth: { xs: 'auto', sm: 320 },
+        }}
+      >
+        <TextField
+          size="small"
+          label="Search location"
+          value={searchValue}
+          onChange={(e) => setSearchValue(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter') handleSearchLocation();
+          }}
+          sx={{ flex: 1, minWidth: 180 }}
+        />
+        <Button variant="contained" size="small" onClick={handleSearchLocation} sx={{ textTransform: 'none' }}>
+          Search
+        </Button>
+        <Button variant="outlined" size="small" onClick={handleRecenter} sx={{ textTransform: 'none' }}>
+          Re-center
+        </Button>
+        {searchFeedback && (
+          <Typography
+            variant="caption"
+            color={searchFeedback.type === 'error' ? 'error.main' : 'success.main'}
+            sx={{ width: '100%' }}
+          >
+            {searchFeedback.message}
+          </Typography>
+        )}
+      </Box>
+
+      {showDefaultInfo && defaultCoordinates && (
+        <Box
+          sx={{
+            position: 'absolute',
+            bottom: 16,
+            right: 16,
+            zIndex: 2,
+            bgcolor: (theme) => theme.palette.background.paper,
+            borderRadius: 1,
+            boxShadow: 3,
+            px: 2,
+            py: 1.5,
+            minWidth: 200,
+          }}
+        >
+          <Typography variant="caption" color="text.secondary">
+            Default coordinates
+          </Typography>
+          <Typography variant="body2" fontWeight={600}>
+            Lat: {defaultCoordinates.lat.toFixed(6)}
+          </Typography>
+          <Typography variant="body2" fontWeight={600}>
+            Lng: {defaultCoordinates.lng.toFixed(6)}
+          </Typography>
+        </Box>
+      )}
 
       {/* Detection Popup */}
       {selectedObject && cardPosition && (
