@@ -5,7 +5,7 @@
 
 import { useEffect, useMemo, useRef, useState } from 'react';
 import mapboxgl from 'mapbox-gl';
-import { Box, Button, IconButton, TextField, Typography } from '@mui/material';
+import { Box, Button, CircularProgress, IconButton, TextField, Typography } from '@mui/material';
 import { Icon } from '@iconify/react';
 import { type DetectedObject } from '../types/detection';
 import DetectionPopup from './DetectionPopup';
@@ -46,6 +46,12 @@ type MarkerDescriptor =
       lng: number;
       objects: DetectedObject[];
     };
+
+type SearchSuggestion = {
+  id: string;
+  label: string;
+  center: [number, number];
+};
 
 const toNumber = (value: number | string): number => (typeof value === 'number' ? value : parseFloat(value));
 
@@ -123,6 +129,8 @@ const MapComponent = ({ objects, imagePath, cameraLocation, focusPoint }: MapCom
   const [showDefaultInfo, setShowDefaultInfo] = useState(false);
   const [searchValue, setSearchValue] = useState('');
   const [searchFeedback, setSearchFeedback] = useState<{ type: 'success' | 'error'; message: string } | null>(null);
+  const [searchOptions, setSearchOptions] = useState<SearchSuggestion[]>([]);
+  const [searchLoading, setSearchLoading] = useState(false);
 
   const markerDescriptors = useMemo(
     () => getMarkerDescriptors(objects, currentZoom),
@@ -278,6 +286,17 @@ const MapComponent = ({ objects, imagePath, cameraLocation, focusPoint }: MapCom
     }
   };
 
+  const handleSelectSuggestion = (option: SearchSuggestion) => {
+    setSearchValue(option.label);
+    setSearchOptions([]);
+    map.current?.flyTo({
+      center: option.center,
+      zoom: 16,
+      duration: 900,
+    });
+    setSearchFeedback({ type: 'success', message: option.label });
+  };
+
   useEffect(() => {
     if (!showDefaultInfo) return;
     const timer = setTimeout(() => setShowDefaultInfo(false), 4000);
@@ -289,6 +308,49 @@ const MapComponent = ({ objects, imagePath, cameraLocation, focusPoint }: MapCom
     const timer = setTimeout(() => setSearchFeedback(null), 3500);
     return () => clearTimeout(timer);
   }, [searchFeedback]);
+
+  useEffect(() => {
+    const query = searchValue.trim();
+    if (query.length < 3) {
+      setSearchOptions([]);
+      return;
+    }
+
+    const controller = new AbortController();
+    const timeout = setTimeout(async () => {
+      try {
+        setSearchLoading(true);
+        const token = mapboxgl.accessToken;
+        if (!token) throw new Error('Missing Mapbox access token');
+        const response = await fetch(
+          `https://api.mapbox.com/geocoding/v5/mapbox.places/${encodeURIComponent(query)}.json?access_token=${token}&limit=5`,
+          { signal: controller.signal },
+        );
+        if (!response.ok) throw new Error('Unable to fetch suggestions');
+        const data = await response.json();
+        const options =
+          data.features?.map((feature: any) => ({
+            id: feature.id,
+            label: feature.place_name,
+            center: feature.center as [number, number],
+          })) ?? [];
+        setSearchOptions(options);
+      } catch (error) {
+        if (!controller.signal.aborted) {
+          console.error(error);
+        }
+      } finally {
+        if (!controller.signal.aborted) {
+          setSearchLoading(false);
+        }
+      }
+    }, 350);
+
+    return () => {
+      clearTimeout(timeout);
+      controller.abort();
+    };
+  }, [searchValue]);
 
   const handleClose = () => {
     setSelectedObject(null);
@@ -695,6 +757,9 @@ const MapComponent = ({ objects, imagePath, cameraLocation, focusPoint }: MapCom
           onKeyDown={(e) => {
             if (e.key === 'Enter') handleSearchLocation();
           }}
+          InputProps={{
+            endAdornment: searchLoading ? <CircularProgress size={16} sx={{ mr: 1 }} /> : undefined,
+          }}
           sx={{ flex: 1, minWidth: 180 }}
         />
         <Button variant="contained" size="small" onClick={handleSearchLocation} sx={{ textTransform: 'none' }}>
@@ -711,6 +776,33 @@ const MapComponent = ({ objects, imagePath, cameraLocation, focusPoint }: MapCom
           >
             {searchFeedback.message}
           </Typography>
+        )}
+        {searchOptions.length > 0 && (
+          <Box
+            sx={{
+              width: '100%',
+              maxHeight: 200,
+              overflowY: 'auto',
+              border: '1px solid',
+              borderColor: 'divider',
+              borderRadius: 1,
+            }}
+          >
+            {searchOptions.map((option) => (
+              <Box
+                key={option.id}
+                onClick={() => handleSelectSuggestion(option)}
+                sx={{
+                  px: 1.5,
+                  py: 1,
+                  cursor: 'pointer',
+                  '&:hover': { bgcolor: 'action.hover' },
+                }}
+              >
+                <Typography variant="body2">{option.label}</Typography>
+              </Box>
+            ))}
+          </Box>
         )}
       </Box>
 

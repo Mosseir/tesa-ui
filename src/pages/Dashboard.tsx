@@ -198,7 +198,7 @@ const DefensiveAlertPanel = ({ feed }: { feed: UseDroneFeedResult }) => {
   const latest = feed.events[0];
 
   return (
-    <Panel title="Defensive Alert Box">
+    <Panel title="Alert Status" backg>
       <Stack spacing={2} sx={{ height: '100%' }}>
         <Stack direction="row" spacing={1} flexWrap="wrap">
           <Chip
@@ -668,7 +668,6 @@ const DashboardPage = () => {
 
             <Grid size={{ xs: 12, md: 6, lg: 6 }} sx={{ height: '100%', minHeight: 0 }}>
               <MapPanel
-                title="Defensive Map"
                 event={defensiveLatest}
                 defaultCameraLocation="defence"
                 objects={defensiveObjects.map(({ object }) => object)}
@@ -678,7 +677,7 @@ const DashboardPage = () => {
             <Grid size={{ xs: 12, md: 6, lg: 2 }} sx={{ height: '100%', minHeight: 0 }}>
               <DetectionFeedPanel
                 feed={defensiveFeed}
-                title="Defensive Detection Feed"
+                title="Object Detection"
                 compact
                 onShowDetail={setDetailDetection}
               />
@@ -686,7 +685,7 @@ const DashboardPage = () => {
 
             <Grid size={{ xs: 12, md: 6, lg: 2 }} sx={{ height: '100%', minHeight: 0 }}>
               <HistoryPanel
-                title="Defensive History"
+                title="Filter by Date"
                 events={defensiveFeed.events}
                 enableDetails
                 onShowDetail={setDetailDetection}
@@ -712,7 +711,6 @@ const DashboardPage = () => {
 
             <Grid size={{ xs: 12, md: 6, lg: 8 }} sx={{ height: '100%', minHeight: 0 }}>
               <MapPanel
-                title="Offensive Map"
                 event={offensiveLatest}
                 defaultCameraLocation="offence"
                 focusPoint={offensiveFocus}
@@ -721,7 +719,7 @@ const DashboardPage = () => {
             </Grid>
 
             <Grid size={{ xs: 12, md: 6, lg: 2 }} sx={{ height: '100%', minHeight: 0 }}>
-              <HistoryPanel title="Offensive History" events={offensiveFeed.events} />
+              <HistoryPanel title="Filter by Date" events={offensiveFeed.events} />
             </Grid>
           </Grid>
         </Box>
