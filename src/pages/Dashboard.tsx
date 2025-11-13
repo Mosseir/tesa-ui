@@ -21,6 +21,8 @@ import {
   Grid,
   Typography,
   TextField,
+  Tabs,
+  Tab,
 } from '@mui/material';
 import { LocalizationProvider } from '@mui/x-date-pickers/LocalizationProvider';
 import { AdapterDayjs } from '@mui/x-date-pickers/AdapterDayjs';
@@ -243,6 +245,7 @@ const DefensiveAlertPanel = ({
   const errorMessage = feed.error ? (feed.error instanceof Error ? feed.error.message : String(feed.error)) : null;
   const latest = feed.events[0];
   const [radiusInput, setRadiusInput] = useState(String(detectionRadius));
+  const [tab, setTab] = useState<'status' | 'settings'>('status');
 
   useEffect(() => {
     setRadiusInput(String(detectionRadius));
@@ -283,76 +286,101 @@ const DefensiveAlertPanel = ({
   }, [feed.events, detectionRadius, defaultLocation]);
 
   return (
-    <Panel title="Alert Status">
+    <Panel>
       <Stack spacing={2} sx={{ height: '100%' }}>
-        <Stack direction="row" spacing={1} flexWrap="wrap">
-          <Chip
-            icon={<Icon icon={feed.isConnected ? 'mdi:check-circle' : 'mdi:close-circle'} />}
-            label={feed.isConnected ? 'Socket Connected' : 'Socket Down'}
-            color={feed.isConnected ? 'success' : 'error'}
-            size="small"
-          />
-          <Chip
-            icon={<Icon icon={feed.error ? 'mdi:close-circle' : 'mdi:check-circle'} />}
-            label={feed.error ? 'API Error' : 'API Ready'}
-            color={feed.error ? 'error' : 'success'}
-            size="small"
-          />
-          <Chip icon={<Icon icon="mdi:database" />} label={`Events: ${feed.events.length}`} size="small" />
-        </Stack>
+        <Tabs
+          value={tab}
+          onChange={(_, value) => setTab(value)}
+          variant="fullWidth"
+          sx={{ minHeight: 0 }}
+        >
+          <Tab label="Status" value="status" />
+          <Tab label="Settings" value="settings" />
+        </Tabs>
 
-        {errorMessage ? (
-          <Alert severity="error">{errorMessage}</Alert>
-        ) : latest ? (
-          <Alert severity="success">Last detection: {new Date(latest.timestamp).toLocaleString()}</Alert>
-        ) : (
-          <Alert severity="info">Awaiting defensive detections...</Alert>
+        {tab === 'status' && (
+          <>
+            <Stack direction="row" spacing={1} flexWrap="wrap">
+              <Chip
+                icon={<Icon icon={feed.isConnected ? 'mdi:check-circle' : 'mdi:close-circle'} />}
+                label={feed.isConnected ? 'Socket Connected' : 'Socket Down'}
+                color={feed.isConnected ? 'success' : 'error'}
+                size="small"
+              />
+              <Chip
+                icon={<Icon icon={feed.error ? 'mdi:close-circle' : 'mdi:check-circle'} />}
+                label={feed.error ? 'API Error' : 'API Ready'}
+                color={feed.error ? 'error' : 'success'}
+                size="small"
+              />
+              <Chip icon={<Icon icon="mdi:database" />} label={`Events: ${feed.events.length}`} size="small" />
+            </Stack>
+
+            {errorMessage ? (
+              <Alert severity="error">{errorMessage}</Alert>
+            ) : latest ? (
+              <Alert severity="success">Last detection: {new Date(latest.timestamp).toLocaleString()}</Alert>
+            ) : (
+              <Alert severity="info">Awaiting defensive detections...</Alert>
+            )}
+
+            <Box sx={{ border: '1px dashed', borderRadius: 1, borderColor: 'divider', flexGrow: 1, p: 2, overflowY: 'auto' }}>
+              {!defaultLocation ? (
+                <Typography variant="body2" color="text.secondary">
+                  Default marker not set. Set the marker on the map to enable proximity alerts.
+                </Typography>
+              ) : intruders.length === 0 ? (
+                <Typography variant="body2" color="text.secondary" align="center">
+                  No deploy drones detected within {formatDistance(detectionRadius)}.
+                </Typography>
+              ) : (
+                <Stack spacing={1}>
+                  {intruders.map(({ object, distance, etaSeconds }) => (
+                    <Paper key={object.obj_id} variant="outlined" sx={{ p: 1.5 }}>
+                      <Typography variant="subtitle2" fontWeight={600}>
+                        {object.type} · {object.obj_id}
+                      </Typography>
+                      <Typography variant="body2" color="text.secondary">
+                        Distance: {formatDistance(distance)} · Speed: {object.speed ? `${object.speed} m/s` : 'N/A'} · ETA:{' '}
+                        {formatEta(etaSeconds)}
+                      </Typography>
+                    </Paper>
+                  ))}
+                </Stack>
+              )}
+            </Box>
+          </>
         )}
 
-        <Box sx={{ border: '1px dashed', borderRadius: 1, borderColor: 'divider', flexGrow: 1, p: 2, overflowY: 'auto' }}>
-          {!defaultLocation ? (
-            <Typography variant="body2" color="text.secondary">
-              Default marker not set. Set the marker on the map to enable proximity alerts.
-            </Typography>
-          ) : intruders.length === 0 ? (
-            <Typography variant="body2" color="text.secondary" align="center">
-              No deploy drones detected within {formatDistance(detectionRadius)}.
-            </Typography>
-          ) : (
-            <Stack spacing={1}>
-              {intruders.map(({ object, distance, etaSeconds }) => (
-                <Paper key={object.obj_id} variant="outlined" sx={{ p: 1.5 }}>
-                  <Typography variant="subtitle2" fontWeight={600}>
-                    {object.type} · {object.obj_id}
-                  </Typography>
-                  <Typography variant="body2" color="text.secondary">
-                    Distance: {formatDistance(distance)} · Speed: {object.speed ? `${object.speed} m/s` : 'N/A'} · ETA:{' '}
-                    {formatEta(etaSeconds)}
-                  </Typography>
-                </Paper>
-              ))}
+        {tab === 'settings' && (
+          <Stack spacing={2}>
+            <Typography variant="subtitle2">Detection radius (meters)</Typography>
+            <Stack direction="row" spacing={1}>
+              <TextField
+                size="small"
+                type="number"
+                value={radiusInput}
+                onChange={(e) => setRadiusInput(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter') handleRadiusSubmit();
+                }}
+                sx={{ minWidth: 120 }}
+              />
+              <Button variant="contained" onClick={handleRadiusSubmit} size="small" sx={{ textTransform: 'none' }}>
+                Update radius
+              </Button>
             </Stack>
-          )}
-        </Box>
-
-        <Stack spacing={1}>
-          <Typography variant="subtitle2">Detection radius (meters)</Typography>
-          <Stack direction="row" spacing={1}>
-            <TextField
-              size="small"
-              type="number"
-              value={radiusInput}
-              onChange={(e) => setRadiusInput(e.target.value)}
-              onKeyDown={(e) => {
-                if (e.key === 'Enter') handleRadiusSubmit();
-              }}
-              sx={{ minWidth: 120 }}
-            />
-            <Button variant="contained" onClick={handleRadiusSubmit} size="small" sx={{ textTransform: 'none' }}>
-              Update radius
-            </Button>
+            {defaultLocation ? (
+              <Typography variant="body2" color="text.secondary">
+                Default marker: lat {defaultLocation.lat.toFixed(5)} • lng {defaultLocation.lng.toFixed(5)}
+              </Typography>
+            ) : (
+              <Typography variant="body2" color="text.secondary">
+                Default marker not set.
+              </Typography>
+            )}
           </Stack>
-        </Stack>
+        )}
       </Stack>
     </Panel>
   );
@@ -503,6 +531,7 @@ const DetectionFeedPanel = ({
 }) => {
   const errorMessage = feed.error ? (feed.error instanceof Error ? feed.error.message : String(feed.error)) : null;
   const [localDetail, setLocalDetail] = useState<DetectionEvent | null>(null);
+  const [tab, setTab] = useState<'feed' | 'latest'>('feed');
 
   const shouldUseLocalDialog = !onShowDetail;
   const detailDetection = shouldUseLocalDialog ? localDetail : null;
@@ -514,6 +543,8 @@ const DetectionFeedPanel = ({
 
   const handleCloseDetail = () => setLocalDetail(null);
 
+  const latestEvent = feed.events[0];
+
   return (
     <Panel title={title}>
       {feed.isLoading && (
@@ -524,23 +555,49 @@ const DetectionFeedPanel = ({
 
       {!feed.isLoading && errorMessage && <Alert severity="error">{errorMessage}</Alert>}
 
-      {!feed.isLoading && !errorMessage && feed.events.length === 0 && (
-        <Alert severity="info">Waiting for detections...</Alert>
-      )}
-
-      {!feed.isLoading && !errorMessage && feed.events.length > 0 && (
+      {!feed.isLoading && !errorMessage && (
         <>
-          <Box sx={{ height: '100%', overflowY: 'auto', pr: 1 }}>
-            <Stack spacing={compact ? 1.5 : 2}>
-              {feed.events.map((event) =>
-                compact ? (
-                  <DetectionSummaryModule key={`${title}-${event.id}`} detection={event} onSelect={handleOpenDetail} />
-                ) : (
-                  <DetectionCard key={`${title}-${event.id}`} detection={event} />
-                ),
-              )}
-            </Stack>
+          <Box sx={{ mb: 1 }}>
+            <Tabs
+              value={tab}
+              onChange={(_, value) => setTab(value)}
+              variant="fullWidth"
+              sx={{ minHeight: 0 }}
+            >
+              <Tab label="Detection" value="feed" />
+              <Tab label="Latest Image" value="latest" />
+            </Tabs>
           </Box>
+
+          {tab === 'feed' && feed.events.length > 0 && (
+            <Box sx={{ height: '100%', overflowY: 'auto', pr: 1 }}>
+              <Stack spacing={compact ? 1.5 : 2}>
+                {feed.events.map((event) =>
+                  compact ? (
+                    <DetectionSummaryModule key={`${title}-${event.id}`} detection={event} onSelect={handleOpenDetail} />
+                  ) : (
+                    <DetectionCard key={`${title}-${event.id}`} detection={event} />
+                  ),
+                )}
+              </Stack>
+            </Box>
+          )}
+
+          {tab === 'latest' && latestEvent && (
+            <Box sx={{ height: '100%', borderRadius: 1, overflow: 'hidden' }}>
+              <ImageViewer
+                src={getDetectionImageUrl(latestEvent.image_path) ?? ''}
+                alt="Latest detection"
+                width="100%"
+                height="100%"
+                objectFit="cover"
+              />
+            </Box>
+          )}
+
+          {tab === 'latest' && !latestEvent && (
+            <Alert severity="info">No snapshots recorded yet.</Alert>
+          )}
 
           {shouldUseLocalDialog && (
             <DetectionDetailDialog detection={detailDetection} onClose={handleCloseDetail} />

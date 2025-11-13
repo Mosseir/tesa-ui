@@ -24,7 +24,4 @@ dist-ssr
 *.sw?
 
 src/pages/Dashboard-v1.tsx
-src/pages/Dashboard-v2.tsx
-src/pages/Dashboard-v3.tsx 
-src/pages/Dashboard-v5.tsx 
 src/pages/HomePage.tsx 
