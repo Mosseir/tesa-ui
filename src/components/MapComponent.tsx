@@ -5,7 +5,6 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import mapboxgl from 'mapbox-gl';
-import type { Feature, FeatureCollection } from 'geojson';
 import { Box, Button, CircularProgress, IconButton, Stack, TextField, Typography } from '@mui/material';
 import { Icon } from '@iconify/react';
 import { type DetectedObject } from '../types/detection';
@@ -184,49 +183,6 @@ const MapComponent = ({
     () => getMarkerDescriptors(objects, currentZoom),
     [objects, currentZoom],
   );
-
-  const targetFeatures = useMemo(() => {
-    const lines: Feature[] = [];
-    const points: Feature[] = [];
-
-    objects.forEach((object) => {
-      const currentLat = getObjectLatitude(object);
-      const currentLng = getObjectLongitude(object);
-      if (currentLat === null || currentLng === null) return;
-
-      const telemetry = object.details ?? object.detail;
-      const targetLat = toOptionalNumber(telemetry?.tar_lat ?? null);
-      const targetLng = toOptionalNumber(telemetry?.tar_lng ?? null);
-      if (targetLat === null || targetLng === null) return;
-
-      lines.push({
-        type: 'Feature',
-        geometry: {
-          type: 'LineString',
-          coordinates: [
-            [currentLng, currentLat],
-            [targetLng, targetLat],
-          ],
-        },
-        properties: {
-          id: object.obj_id,
-        },
-      } as Feature);
-
-      points.push({
-        type: 'Feature',
-        geometry: {
-          type: 'Point',
-          coordinates: [targetLng, targetLat],
-        },
-        properties: {
-          id: object.obj_id,
-        },
-      } as Feature);
-    });
-
-    return { lines, points };
-  }, [objects]);
 
   useEffect(() => {
     if (defaultLocation) {
@@ -537,68 +493,6 @@ const MapComponent = ({
       existingSource.setData(data);
     }
   }, [defaultCoordinates, detectionRadius, isMapReady]);
-
-  useEffect(() => {
-    if (!isMapReady || !map.current) return;
-
-    const linesSourceId = 'drone-target-lines';
-    const linesLayerId = 'drone-target-lines-layer';
-    const pointsSourceId = 'drone-target-points';
-    const pointsLayerId = 'drone-target-points-layer';
-
-    const linesData: FeatureCollection = {
-      type: 'FeatureCollection',
-      features: targetFeatures.lines,
-    };
-    const pointsData: FeatureCollection = {
-      type: 'FeatureCollection',
-      features: targetFeatures.points,
-    };
-
-    const ensureSource = (id: string, data: FeatureCollection) => {
-      const existing = map.current?.getSource(id) as mapboxgl.GeoJSONSource | undefined;
-      if (!existing) {
-        map.current?.addSource(id, { type: 'geojson', data });
-      } else {
-        existing.setData(data);
-      }
-    };
-
-    ensureSource(linesSourceId, linesData);
-    if (!map.current.getLayer(linesLayerId)) {
-      map.current.addLayer({
-        id: linesLayerId,
-        type: 'line',
-        source: linesSourceId,
-        layout: {
-          'line-cap': 'round',
-          'line-join': 'round',
-        },
-        paint: {
-          'line-color': '#ffee58',
-          'line-width': 2,
-          'line-dasharray': [2, 2],
-          'line-opacity': 0.85,
-        },
-      });
-    }
-
-    ensureSource(pointsSourceId, pointsData);
-    if (!map.current.getLayer(pointsLayerId)) {
-      map.current.addLayer({
-        id: pointsLayerId,
-        type: 'circle',
-        source: pointsSourceId,
-        paint: {
-          'circle-radius': 5,
-          'circle-color': '#ff7043',
-          'circle-stroke-color': '#ffffff',
-          'circle-stroke-width': 1.5,
-        },
-      });
-    }
-
-  }, [isMapReady, targetFeatures]);
 
   const handleClose = () => {
     setSelectedObject(null);
