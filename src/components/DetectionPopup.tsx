@@ -1,31 +1,32 @@
-/**
- * Component สำหรับแสดงรายละเอียดของวัตถุที่ตรวจจับ
- * ใช้แสดงใน popup บนแผนที่
- */
-
-import {
-  Card,
-  CardContent,
-  Typography,
-  Box,
-  Stack,
-} from '@mui/material';
+import { Card, CardContent, Typography, Box, Stack } from '@mui/material';
 import { Icon } from '@iconify/react';
 import { type DetectedObject } from '../types/detection';
 import ImageViewer from './ImageViewer';
+import { getObjectLatitude, getObjectLongitude } from '../utils/objectGeo';
 
 interface DetectionPopupProps {
   object: DetectedObject;
   imagePath?: string;
 }
 
-const DetectionPopup = ({ object, imagePath }: DetectionPopupProps) => {
-  // สร้าง URL ของรูปภาพ (ถ้ามี)
-  const imageUrl = imagePath
-    ? `${import.meta.env.VITE_API_BASE_URL.replace('/api', '')}${imagePath}`
-    : null;
+const formatCoordinate = (value: number | string | null | undefined) => {
+  if (typeof value === 'number' && Number.isFinite(value)) return value.toFixed(6);
+  if (typeof value === 'string') {
+    const parsed = Number.parseFloat(value);
+    return Number.isFinite(parsed) ? parsed.toFixed(6) : 'N/A';
+  }
+  return 'N/A';
+};
 
-  // เลือก icon ตามประเภทวัตถุ
+const DetectionPopup = ({ object, imagePath }: DetectionPopupProps) => {
+  const baseUrl = import.meta.env.VITE_API_BASE_URL?.replace('/api', '') ?? '';
+  const imageUrl = imagePath && baseUrl ? `${baseUrl}${imagePath}` : null;
+  const detail = object.details ?? object.detail;
+  const speed = typeof detail?.speed === 'number' ? detail.speed : null;
+  const altitude = typeof detail?.alt === 'number' ? detail.alt : null;
+  const lat = getObjectLatitude(object);
+  const lng = getObjectLongitude(object);
+
   const getObjectIcon = (type: string): string => {
     const iconMap: Record<string, string> = {
       person: 'mdi:account',
@@ -44,20 +45,12 @@ const DetectionPopup = ({ object, imagePath }: DetectionPopupProps) => {
 
   return (
     <Card sx={{ minWidth: 280 }}>
-      {/* รูปภาพ (ถ้ามี) */}
       {imageUrl && (
-        <ImageViewer
-          src={imageUrl}
-          alt="Detection"
-          width="100%"
-          height={150}
-          objectFit="cover"
-        />
+        <ImageViewer src={imageUrl} alt="Detection" width="100%" height={150} objectFit="cover" />
       )}
 
       <CardContent sx={{ p: 2 }}>
-        <Stack spacing={1.5}>
-          {/* Object ID */}
+        <Stack spacing={1.25}>
           <Stack direction="row" spacing={1} alignItems="center">
             <Icon icon={getObjectIcon(object.type)} width={20} />
             <Typography variant="subtitle2" fontWeight="bold">
@@ -65,31 +58,42 @@ const DetectionPopup = ({ object, imagePath }: DetectionPopupProps) => {
             </Typography>
           </Stack>
 
-          {/* Type and Size */}
           <Stack direction="row" spacing={1} alignItems="center">
             <Icon icon="mdi:tag" width={18} />
             <Typography variant="body2" color="text.secondary">
-              {object.type} • {object.size}
+              Type: {object.type}
             </Typography>
           </Stack>
 
-          {/* Objective */}
           <Stack direction="row" spacing={1} alignItems="center">
-            <Icon icon="mdi:target" width={18} />
+            <Icon icon="mdi:bullseye-arrow" width={18} />
             <Typography variant="body2" color="text.secondary">
-              {object.objective}
+              Objective: {object.objective}
             </Typography>
           </Stack>
 
-          {/* Location */}
+          <Stack direction="row" spacing={1} alignItems="center">
+            <Icon icon="mdi:speedometer" width={18} />
+            <Typography variant="body2" color="text.secondary">
+              Speed: {speed !== null ? `${speed.toFixed(1)} m/s` : 'N/A'}
+            </Typography>
+          </Stack>
+
+          <Stack direction="row" spacing={1} alignItems="center">
+            <Icon icon="mdi:airplane-takeoff" width={18} />
+            <Typography variant="body2" color="text.secondary">
+              Attitude: {altitude !== null ? `${altitude.toFixed(1)} m` : 'N/A'}
+            </Typography>
+          </Stack>
+
           <Stack direction="row" spacing={1} alignItems="flex-start">
             <Icon icon="mdi:map-marker" width={18} style={{ marginTop: 2 }} />
             <Box>
               <Typography variant="caption" color="text.secondary" display="block">
-                Lat: {typeof object.lat === 'number' ? object.lat.toFixed(6) : object.lat}
+                Lat: {formatCoordinate(lat)}
               </Typography>
               <Typography variant="caption" color="text.secondary" display="block">
-                Lng: {typeof object.lng === 'number' ? object.lng.toFixed(6) : object.lng}
+                Lng: {formatCoordinate(lng)}
               </Typography>
             </Box>
           </Stack>

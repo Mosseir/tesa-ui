@@ -3,6 +3,18 @@
  */
 
 // วัตถุที่ตรวจพบแต่ละชิ้น
+export interface DetectedObjectDetail {
+  lat?: number;
+  lng?: number;
+  latitude?: number;
+  longitude?: number;
+  speed?: number;
+  alt?: number;
+  tar_lat?: number;
+  tar_lng?: number;
+  eta?: number;
+}
+
 export interface DetectedObject {
   obj_id: string;      // e.g. "obj_001"
   type: string;        // e.g. "drone", "person", "car"
@@ -10,7 +22,9 @@ export interface DetectedObject {
   lng: number;         // longitude (decimal degrees)
   objective: string;   // mission classification
   size: string;        // "small", "medium", "large"
-  speed?: number;      // optional speed in meters per second
+  speed?: number;      // optional fallback speed in meters per second
+  detail?: DetectedObjectDetail; // legacy telemetry field
+  details?: DetectedObjectDetail; // preferred telemetry field
 }
 
 // ข้อมูลกล้อง

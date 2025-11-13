@@ -38,6 +38,7 @@ import { useDetections } from '../hooks/useDetections';
 import { useSocket } from '../hooks/useSocket';
 import { droneProfiles } from '../config/droneProfiles';
 import { type DetectionEvent, type DetectedObject } from '../types/detection';
+import { getObjectLatitude, getObjectLongitude } from '../utils/objectGeo';
 
 type UseDroneFeedResult = {
   events: DetectionEvent[];
@@ -160,10 +161,15 @@ const DetectionDetailDialog = ({
                     <Typography variant="caption" color="text.secondary" display="block">
                       Objective: {obj.objective} - Size: {obj.size}
                     </Typography>
-                    <Typography variant="caption" color="text.secondary" display="block">
-                      Lat: {typeof obj.lat === 'number' ? obj.lat.toFixed(6) : obj.lat} - Lng:{' '}
-                      {typeof obj.lng === 'number' ? obj.lng.toFixed(6) : obj.lng}
-                    </Typography>
+                            {(() => {
+                              const lat = getObjectLatitude(obj);
+                              const lng = getObjectLongitude(obj);
+                              return (
+                                <Typography variant="caption" color="text.secondary" display="block">
+                                  Lat: {formatCoordinateValue(lat)} - Lng: {formatCoordinateValue(lng)}
+                                </Typography>
+                              );
+                            })()}
                   </Box>
                 ))}
               </Stack>
@@ -230,6 +236,34 @@ const formatDistance = (meters: number) => {
   return `${meters.toFixed(0)} m`;
 };
 
+const getObjectDetail = (object: DetectedObject) => object.details ?? object.detail ?? null;
+
+const formatSpeed = (value: number | null) => {
+  if (value === null || !Number.isFinite(value)) return 'N/A';
+  return `${value.toFixed(1)} m/s`;
+};
+
+const getObjectSpeed = (object: DetectedObject): number | null => {
+  const detail = object.details;
+  if (typeof detail?.speed === 'number' && Number.isFinite(detail.speed)) {
+    return detail.speed;
+  }
+  return null;
+};
+
+const getObjectEta = (object: DetectedObject): number | null => {
+  const detail = getObjectDetail(object);
+  if (typeof detail?.eta === 'number' && Number.isFinite(detail.eta)) {
+    return detail.eta;
+  }
+  return null;
+};
+
+const formatCoordinateValue = (value: number | null | undefined) => {
+  if (typeof value === 'number' && Number.isFinite(value)) return value.toFixed(6);
+  return 'N/A';
+};
+
 const DEFAULT_DEFENCE_LOCATION: LatLng = { lat: 14.297567, lng: 101.166279 };
 const DEFAULT_OFFENCE_LOCATION: LatLng = { lat: 14.286451, lng: 101.171298 };
 
@@ -265,21 +299,24 @@ const DefensiveAlertPanel = ({
   const intruders = useMemo(() => {
     if (!defaultLocation || detectionRadius <= 0) return [];
 
-    const seen = new Map<string, { object: DetectedObject; distance: number; etaSeconds: number | null }>();
+    const seen = new Map<
+      string,
+      { object: DetectedObject; distance: number; etaSeconds: number | null; speed: number | null }
+    >();
 
     feed.events.forEach((event) => {
       event.objects?.forEach((obj) => {
-        const lat = typeof obj.lat === 'number' ? obj.lat : parseFloat(String(obj.lat));
-        const lng = typeof obj.lng === 'number' ? obj.lng : parseFloat(String(obj.lng));
-        if (!Number.isFinite(lat) || !Number.isFinite(lng)) return;
+        const lat = getObjectLatitude(obj);
+        const lng = getObjectLongitude(obj);
+        if (lat === null || lng === null) return;
 
         const distance = calculateDistanceMeters(defaultLocation, { lat, lng });
         if (distance > detectionRadius) return;
 
         if (!seen.has(obj.obj_id)) {
-          const speed = typeof obj.speed === 'number' ? obj.speed : null;
+          const speed = getObjectSpeed(obj);
           const etaSeconds = speed && speed > 0 ? distance / speed : null;
-          seen.set(obj.obj_id, { object: obj, distance, etaSeconds });
+          seen.set(obj.obj_id, { object: obj, distance, etaSeconds, speed });
         }
       });
     });
@@ -337,14 +374,20 @@ const DefensiveAlertPanel = ({
                 </Typography>
               ) : (
                 <Stack spacing={1}>
-                  {intruders.map(({ object, distance, etaSeconds }) => (
+
+                  {intruders.map(({ object, distance, etaSeconds, speed }) => (
                     <Paper key={object.obj_id} variant="outlined" sx={{ p: 1.5 }}>
                       <Typography variant="subtitle2" fontWeight={600}>
-                        {object.type} · {object.obj_id}
+                        {object.obj_id}
                       </Typography>
                       <Typography variant="body2" color="text.secondary">
-                        Distance: {formatDistance(distance)} · Speed: {object.speed ? `${object.speed} m/s` : 'N/A'} · ETA:{' '}
-                        {formatEta(etaSeconds)}
+                        Distance: {formatDistance(distance)}
+                      </Typography>
+                      <Typography variant="body2" color="text.secondary">
+                        Speed: {formatSpeed(speed)}
+                      </Typography>
+                      <Typography variant="body2" color="text.secondary">
+                        ETA: {formatEta(etaSeconds)}
                       </Typography>
                     </Paper>
                   ))}
@@ -788,8 +831,7 @@ const HistoryPanel = ({
                               Objective: {obj.objective} - Size: {obj.size}
                             </Typography>
                             <Typography variant="caption" color="text.secondary" display="block">
-                              Lat: {typeof obj.lat === 'number' ? obj.lat.toFixed(6) : obj.lat} - Lng:{' '}
-                              {typeof obj.lng === 'number' ? obj.lng.toFixed(6) : obj.lng}
+                              Lat: {formatCoordinateValue(getObjectLatitude(obj))} - Lng: {formatCoordinateValue(getObjectLongitude(obj))}
                             </Typography>
                           </Box>
                         ))}
@@ -844,6 +886,22 @@ const DroneListPanel = ({
   selectedId?: string | null;
 }) => {
   const errorMessage = feed.error ? (feed.error instanceof Error ? feed.error.message : String(feed.error)) : null;
+  const [detailEntry, setDetailEntry] = useState<LatestObjectEntry | null>(null);
+
+  const handleItemClick = (entry: LatestObjectEntry) => {
+    onSelect?.(entry.object);
+    setDetailEntry(entry);
+  };
+
+  const handleCloseDetail = () => setDetailEntry(null);
+
+  useEffect(() => {
+    if (!detailEntry) return;
+    const updated = latestObjects.find((entry) => entry.object.obj_id === detailEntry.object.obj_id);
+    if (updated && (updated.object !== detailEntry.object || updated.lastSeen !== detailEntry.lastSeen)) {
+      setDetailEntry(updated);
+    }
+  }, [detailEntry, latestObjects]);
 
   return (
     <Panel title="Deployed Drones List">
@@ -874,10 +932,33 @@ const DroneListPanel = ({
         <List dense sx={{ height: '100%', overflowY: 'auto' }}>
           {latestObjects.map(({ object, lastSeen }) => {
             const isSelected = selectedId === object.obj_id;
+            const telemetry = getObjectDetail(object);
+            const targetLat = telemetry?.tar_lat;
+            const targetLng = telemetry?.tar_lng;
+            const numericTargetLat =
+              typeof targetLat === 'number'
+                ? targetLat
+                : typeof targetLat === 'string'
+                  ? Number.parseFloat(targetLat)
+                  : Number.NaN;
+            const numericTargetLng =
+              typeof targetLng === 'number'
+                ? targetLng
+                : typeof targetLng === 'string'
+                  ? Number.parseFloat(targetLng)
+                  : Number.NaN;
+            const hasTarget = Number.isFinite(numericTargetLat) && Number.isFinite(numericTargetLng);
+            const targetDisplay = hasTarget
+              ? `${formatCoordinateValue(numericTargetLat)} , ${formatCoordinateValue(numericTargetLng)}`
+              : 'N/A';
+            const etaSeconds = getObjectEta(object);
+            const etaDisplay = etaSeconds !== null ? formatEta(etaSeconds) : 'N/A';
+            const latValue = getObjectLatitude(object);
+            const lngValue = getObjectLongitude(object);
             return (
               <ListItem key={object.obj_id} disablePadding>
                 <ListItemButton
-                  onClick={() => onSelect?.(object)}
+                  onClick={() => handleItemClick({ object, lastSeen })}
                   selected={isSelected}
                   sx={{
                     alignItems: 'flex-start',
@@ -890,7 +971,22 @@ const DroneListPanel = ({
                 >
                   <ListItemText
                     primary={`${object.type} - ${object.obj_id}`}
-                    secondary={`Objective: ${object.objective} - Last seen: ${new Date(lastSeen).toLocaleString()}`}
+                    secondary={
+                      <Stack spacing={0.5}>
+                        <Typography variant="caption" color="text.secondary">
+                          Lat: {formatCoordinateValue(latValue)} | Lng: {formatCoordinateValue(lngValue)}
+                        </Typography>
+                        <Typography variant="caption" color="text.secondary">
+                          Target: {targetDisplay}
+                        </Typography>
+                        <Typography variant="caption" color="text.secondary">
+                          ETA: {etaDisplay}
+                        </Typography>
+                        <Typography variant="caption" color="text.secondary">
+                          Last seen: {new Date(lastSeen).toLocaleString()}
+                        </Typography>
+                      </Stack>
+                    }
                   />
                 </ListItemButton>
               </ListItem>
@@ -898,6 +994,72 @@ const DroneListPanel = ({
           })}
         </List>
       )}
+
+      <Dialog open={Boolean(detailEntry)} onClose={handleCloseDetail} fullWidth maxWidth="sm">
+        <DialogTitle>Drone detail</DialogTitle>
+        <DialogContent dividers>
+          {detailEntry && (
+            <Stack spacing={1.25}>
+              {(() => {
+                const detailObject = detailEntry.object;
+                const telemetry = getObjectDetail(detailObject);
+                const targetLat = telemetry?.tar_lat;
+                const targetLng = telemetry?.tar_lng;
+                const numericTargetLat =
+                  typeof targetLat === 'number'
+                    ? targetLat
+                    : typeof targetLat === 'string'
+                      ? Number.parseFloat(targetLat)
+                      : Number.NaN;
+                const numericTargetLng =
+                  typeof targetLng === 'number'
+                    ? targetLng
+                    : typeof targetLng === 'string'
+                      ? Number.parseFloat(targetLng)
+                      : Number.NaN;
+                const targetValid = Number.isFinite(numericTargetLat) && Number.isFinite(numericTargetLng);
+                const latValue = getObjectLatitude(detailObject);
+                const lngValue = getObjectLongitude(detailObject);
+                const etaSeconds = getObjectEta(detailObject);
+
+                return (
+                  <>
+                    <Typography variant="subtitle2" fontWeight={600}>
+                      {detailObject.obj_id}
+                    </Typography>
+                    <Typography variant="body2" color="text.secondary">
+                      Type: {detailObject.type}
+                    </Typography>
+                    <Typography variant="body2" color="text.secondary">
+                      Objective: {detailObject.objective}
+                    </Typography>
+                    <Typography variant="body2" color="text.secondary">
+                      Lat: {formatCoordinateValue(latValue)} | Lng: {formatCoordinateValue(lngValue)}
+                    </Typography>
+                    <Typography variant="body2" color="text.secondary">
+                      Target:{' '}
+                      {targetValid
+                        ? `${formatCoordinateValue(numericTargetLat)} , ${formatCoordinateValue(numericTargetLng)}`
+                        : 'N/A'}
+                    </Typography>
+                    {etaSeconds !== null && (
+                      <Typography variant="body2" color="text.secondary">
+                        ETA: {formatEta(etaSeconds)}
+                      </Typography>
+                    )}
+                    <Typography variant="body2" color="text.secondary">
+                      Last seen: {new Date(detailEntry.lastSeen).toLocaleString()}
+                    </Typography>
+                  </>
+                );
+              })()}
+            </Stack>
+          )}
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={handleCloseDetail}>Close</Button>
+        </DialogActions>
+      </Dialog>
     </Panel>
   );
 };
@@ -918,9 +1080,9 @@ const DashboardPage = () => {
   const [defensiveDefaultLocation, setDefensiveDefaultLocation] = useState<LatLng>(DEFAULT_DEFENCE_LOCATION);
 
   const handleDroneSelect = (object: DetectedObject) => {
-    const lat = typeof object.lat === 'number' ? object.lat : parseFloat(String(object.lat));
-    const lng = typeof object.lng === 'number' ? object.lng : parseFloat(String(object.lng));
-    if (!Number.isFinite(lat) || !Number.isFinite(lng)) return;
+    const lat = getObjectLatitude(object);
+    const lng = getObjectLongitude(object);
+    if (lat === null || lng === null) return;
 
     setOffensiveFocus({ lat, lng });
     setSelectedDroneId(object.obj_id);
