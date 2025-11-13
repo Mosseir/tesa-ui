@@ -5,7 +5,7 @@
 
 import { useEffect, useMemo, useRef, useState } from 'react';
 import mapboxgl from 'mapbox-gl';
-import { Box, Button, CircularProgress, IconButton, TextField, Typography } from '@mui/material';
+import { Box, Button, CircularProgress, IconButton, Stack, TextField, Typography } from '@mui/material';
 import { Icon } from '@iconify/react';
 import { type DetectedObject } from '../types/detection';
 import DetectionPopup from './DetectionPopup';
@@ -166,6 +166,7 @@ const MapComponent = ({
   const [searchFeedback, setSearchFeedback] = useState<{ type: 'success' | 'error'; message: string } | null>(null);
   const [searchOptions, setSearchOptions] = useState<SearchSuggestion[]>([]);
   const [searchLoading, setSearchLoading] = useState(false);
+  const [searchOpen, setSearchOpen] = useState(true);
   const [isMapReady, setIsMapReady] = useState(false);
 
   const markerDescriptors = useMemo(
@@ -899,72 +900,105 @@ const MapComponent = ({
           position: 'absolute',
           top: 12,
           left: 12,
-          zIndex: 2,
-          display: 'flex',
-          flexWrap: 'wrap',
-          gap: 1,
-          alignItems: 'center',
-          bgcolor: (theme) => theme.palette.background.paper,
-          borderRadius: 1,
-          boxShadow: 2,
-          p: 1.5,
-          minWidth: { xs: 'auto', sm: 320 },
+          zIndex: 3,
         }}
       >
-        <TextField
-          size="small"
-          label="Search location"
-          value={searchValue}
-          onChange={(e) => setSearchValue(e.target.value)}
-          onKeyDown={(e) => {
-            if (e.key === 'Enter') handleSearchLocation();
-          }}
-          InputProps={{
-            endAdornment: searchLoading ? <CircularProgress size={16} sx={{ mr: 1 }} /> : undefined,
-          }}
-          sx={{ flex: 1, minWidth: 180 }}
-        />
-        <Button variant="contained" size="small" onClick={handleSearchLocation} sx={{ textTransform: 'none' }}>
-          Search
-        </Button>
-        <Button variant="outlined" size="small" onClick={handleRecenter} sx={{ textTransform: 'none' }}>
-          Re-center
-        </Button>
-        {searchFeedback && (
-          <Typography
-            variant="caption"
-            color={searchFeedback.type === 'error' ? 'error.main' : 'success.main'}
-            sx={{ width: '100%' }}
+        {!searchOpen ? (
+          <Button
+            size="small"
+            variant="contained"
+            startIcon={<Icon icon="mdi:magnify" />}
+            onClick={() => setSearchOpen(true)}
+            sx={{ textTransform: 'none' }}
           >
-            {searchFeedback.message}
-          </Typography>
-        )}
-        {searchOptions.length > 0 && (
+            Search
+          </Button>
+        ) : (
           <Box
             sx={{
-              width: '100%',
-              maxHeight: 200,
-              overflowY: 'auto',
-              border: '1px solid',
-              borderColor: 'divider',
-              borderRadius: 1,
+              display: 'flex',
+              flexDirection: 'column',
+              gap: 1,
               bgcolor: (theme) => theme.palette.background.paper,
+              borderRadius: 1,
+              boxShadow: 2,
+              p: 1.5,
+              minWidth: { xs: 240, sm: 320 },
             }}
           >
-            {searchOptions.map((option) => (
-              <Box
-                key={option.id}
-                onClick={() => handleSelectSuggestion(option)}
-                sx={{
-                  px: 1.5,
-                  py: 1,
-                  cursor: 'pointer',
-                  '&:hover': { bgcolor: 'action.hover' },
+            <Stack direction="row" spacing={1} alignItems="center" justifyContent="space-between">
+              <Typography variant="subtitle2" fontWeight={600}>
+                Search & controls
+              </Typography>
+              <IconButton size="small" onClick={() => setSearchOpen(false)}>
+                <Icon icon="mdi:close" width={18} />
+              </IconButton>
+            </Stack>
+            <Stack spacing={1}>
+              <TextField
+                size="small"
+                label="Search location"
+                value={searchValue}
+                onChange={(e) => setSearchValue(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter') handleSearchLocation();
                 }}
-              >
-                <Typography variant="body2">{option.label}</Typography>
-              </Box>
-            ))}
+                InputProps={{
+                  endAdornment: searchLoading ? <CircularProgress size={16} sx={{ mr: 1 }} /> : undefined,
+                }}
+                sx={{ width: '100%' }}
+              />
+              <Stack direction="row" spacing={1}>
+                <Button
+                  variant="contained"
+                  size="small"
+                  onClick={handleSearchLocation}
+                  sx={{ textTransform: 'none', flex: 1 }}
+                >
+                  Search
+                </Button>
+                <Button variant="outlined" size="small" onClick={handleRecenter} sx={{ textTransform: 'none' }}>
+                  Re-center
+                </Button>
+              </Stack>
+
+              {searchFeedback && (
+                <Typography
+                  variant="caption"
+                  color={searchFeedback.type === 'error' ? 'error.main' : 'success.main'}
+                >
+                  {searchFeedback.message}
+                </Typography>
+              )}
+
+              {searchOptions.length > 0 && (
+                <Box
+                  sx={{
+                    maxHeight: 200,
+                    overflowY: 'auto',
+                    border: '1px solid',
+                    borderColor: 'divider',
+                    borderRadius: 1,
+                    bgcolor: (theme) => theme.palette.background.paper,
+                  }}
+                >
+                  {searchOptions.map((option) => (
+                    <Box
+                      key={option.id}
+                      onClick={() => handleSelectSuggestion(option)}
+                      sx={{
+                        px: 1.5,
+                        py: 1,
+                        cursor: 'pointer',
+                        '&:hover': { bgcolor: 'action.hover' },
+                      }}
+                    >
+                      <Typography variant="body2">{option.label}</Typography>
+                    </Box>
+                  ))}
+                </Box>
+              )}
+            </Stack>
           </Box>
         )}
       </Box>

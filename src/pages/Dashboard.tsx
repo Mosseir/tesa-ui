@@ -309,30 +309,6 @@ const DefensiveAlertPanel = ({
           <Alert severity="info">Awaiting defensive detections...</Alert>
         )}
 
-        <Stack spacing={1}>
-          <Typography variant="subtitle2">Detection radius (meters)</Typography>
-          <Stack direction="row" spacing={1}>
-            <TextField
-              size="small"
-              type="number"
-              value={radiusInput}
-              onChange={(e) => setRadiusInput(e.target.value)}
-              onKeyDown={(e) => {
-                if (e.key === 'Enter') handleRadiusSubmit();
-              }}
-              sx={{ minWidth: 120 }}
-            />
-            <Button variant="contained" onClick={handleRadiusSubmit} size="small" sx={{ textTransform: 'none' }}>
-              Update radius
-            </Button>
-          </Stack>
-          {defaultLocation && (
-            <Typography variant="caption" color="text.secondary">
-              Default marker: lat {defaultLocation.lat.toFixed(5)} • lng {defaultLocation.lng.toFixed(5)}
-            </Typography>
-          )}
-        </Stack>
-
         <Box sx={{ border: '1px dashed', borderRadius: 1, borderColor: 'divider', flexGrow: 1, p: 2, overflowY: 'auto' }}>
           {!defaultLocation ? (
             <Typography variant="body2" color="text.secondary">
@@ -340,7 +316,7 @@ const DefensiveAlertPanel = ({
             </Typography>
           ) : intruders.length === 0 ? (
             <Typography variant="body2" color="text.secondary" align="center">
-              No unauthorized drones detected within {formatDistance(detectionRadius)}.
+              No deploy drones detected within {formatDistance(detectionRadius)}.
             </Typography>
           ) : (
             <Stack spacing={1}>
@@ -358,6 +334,38 @@ const DefensiveAlertPanel = ({
             </Stack>
           )}
         </Box>
+
+        <Stack spacing={1}>
+          <Typography variant="subtitle2">Detection radius (meters)</Typography>
+          <Stack direction="row" spacing={1}>
+            <TextField
+              size="small"
+              type="number"
+              value={radiusInput}
+              onChange={(e) => setRadiusInput(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter') handleRadiusSubmit();
+              }}
+              sx={{ minWidth: 120 }}
+            />
+            <Button variant="contained" onClick={handleRadiusSubmit} size="small" sx={{ textTransform: 'none' }}>
+              Update radius
+            </Button>
+          </Stack>
+        </Stack>
+        <Paper variant="outlined" sx={{ p: 1 }}>
+          {defaultLocation ? (
+            <>
+              <Typography variant="subtitle2">Default marker location</Typography>
+              <Typography variant="body2">Lat: {defaultLocation.lat.toFixed(5)}</Typography>
+              <Typography variant="body2">Lng: {defaultLocation.lng.toFixed(5)}</Typography>
+            </>
+          ) : (
+            <Typography variant="body2" color="text.secondary">
+              Default marker not set.
+            </Typography>
+          )}
+        </Paper>
       </Stack>
     </Panel>
   );
@@ -605,9 +613,23 @@ const HistoryPanel = ({
           </Typography>
         )}
 
-        <Stack direction="row" spacing={1} flexWrap="wrap">
-          <DatePicker label="Start date" value={startDate} onChange={(value) => setStartDate(value)} slotProps={{ textField: { size: 'small' } }} sx={{ minWidth: 140 }} />
-          <DatePicker label="End date" value={endDate} onChange={(value) => setEndDate(value)} slotProps={{ textField: { size: 'small' } }} sx={{ minWidth: 140 }} />
+        <Stack spacing={1}>
+          <Stack direction={{ xs: 'column', sm: 'row' }} spacing={1}>
+            <DatePicker
+              label="Start date"
+              value={startDate}
+              onChange={(value) => setStartDate(value)}
+              slotProps={{ textField: { size: 'small', fullWidth: true } }}
+              sx={{ flex: 1 }}
+            />
+            <DatePicker
+              label="End date"
+              value={endDate}
+              onChange={(value) => setEndDate(value)}
+              slotProps={{ textField: { size: 'small', fullWidth: true } }}
+              sx={{ flex: 1 }}
+            />
+          </Stack>
         </Stack>
 
         <Box sx={{ flexGrow: 1, overflowY: 'auto' }}>
@@ -687,7 +709,7 @@ const DroneListPanel = ({
   const errorMessage = feed.error ? (feed.error instanceof Error ? feed.error.message : String(feed.error)) : null;
 
   return (
-    <Panel title="Drone List">
+    <Panel title="Deployed Drones List">
       <Stack spacing={1.5} sx={{ mb: 1 }}>
         <Stack direction="row" spacing={1} flexWrap="wrap">
           <Chip
@@ -802,15 +824,6 @@ const DashboardPage = () => {
             columns={12}
             sx={{ minHeight: 0, height: '100%', overflow: 'hidden' }}
           >
-            <Grid size={{ xs: 12, md: 6, lg: 2 }} sx={{ height: '100%', minHeight: 0 }}>
-              <DefensiveAlertPanel
-                feed={defensiveFeed}
-                detectionRadius={defensiveRadius}
-                onRadiusChange={setDefensiveRadius}
-                defaultLocation={defensiveDefaultLocation}
-              />
-            </Grid>
-
             <Grid size={{ xs: 12, md: 6, lg: 6 }} sx={{ height: '100%', minHeight: 0 }}>
               <MapPanel
                 event={defensiveLatest}
@@ -819,6 +832,14 @@ const DashboardPage = () => {
                 detectionRadius={defensiveRadius}
                 defaultLocation={defensiveDefaultLocation}
                 onDefaultLocationChange={setDefensiveDefaultLocation}
+              />
+            </Grid>
+            <Grid size={{ xs: 12, md: 6, lg: 2 }} sx={{ height: '100%', minHeight: 0 }}>
+              <DefensiveAlertPanel
+                feed={defensiveFeed}
+                detectionRadius={defensiveRadius}
+                onRadiusChange={setDefensiveRadius}
+                defaultLocation={defensiveDefaultLocation}
               />
             </Grid>
 
@@ -848,16 +869,7 @@ const DashboardPage = () => {
             columns={12}
             sx={{ minHeight: 0, height: '100%', overflow: 'hidden' }}
           >
-            <Grid size={{ xs: 12, md: 6, lg: 2 }} sx={{ height: '100%', minHeight: 0 }}>
-              <DroneListPanel
-                feed={offensiveFeed}
-                latestObjects={offensiveObjects}
-                onSelect={handleDroneSelect}
-                selectedId={selectedDroneId}
-              />
-            </Grid>
-
-            <Grid size={{ xs: 12, md: 6, lg: 8 }} sx={{ height: '100%', minHeight: 0 }}>
+            <Grid size={{ xs: 12, md: 6, lg: 6 }} sx={{ height: '100%', minHeight: 0 }}>
               <MapPanel
                 event={offensiveLatest}
                 defaultCameraLocation="offence"
@@ -866,6 +878,16 @@ const DashboardPage = () => {
                 defaultLocation={DEFAULT_OFFENCE_LOCATION}
               />
             </Grid>
+
+            <Grid size={{ xs: 12, md: 6, lg: 4 }} sx={{ height: '100%', minHeight: 0 }}>
+              <DroneListPanel
+                feed={offensiveFeed}
+                latestObjects={offensiveObjects}
+                onSelect={handleDroneSelect}
+                selectedId={selectedDroneId}
+              />
+            </Grid>
+
 
             <Grid size={{ xs: 12, md: 6, lg: 2 }} sx={{ height: '100%', minHeight: 0 }}>
               <HistoryPanel title="Filter by Date" events={offensiveFeed.events} />
