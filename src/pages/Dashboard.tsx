@@ -256,6 +256,15 @@ const formatCoordinateValue = (value: number | null | undefined) => {
   return 'N/A';
 };
 
+const parseNumericValue = (value: number | string | null | undefined) => {
+  if (typeof value === 'number') return Number.isFinite(value) ? value : Number.NaN;
+  if (typeof value === 'string') {
+    const parsed = Number.parseFloat(value);
+    return Number.isFinite(parsed) ? parsed : Number.NaN;
+  }
+  return Number.NaN;
+};
+
 const DEFAULT_DEFENCE_LOCATION: LatLng = { lat: 14.297567, lng: 101.166279 };
 const DEFAULT_OFFENCE_LOCATION: LatLng = { lat: 14.286451, lng: 101.171298 };
 
@@ -925,20 +934,8 @@ const DroneListPanel = ({
           {latestObjects.map(({ object, lastSeen }) => {
             const isSelected = selectedId === object.obj_id;
             const telemetry = getObjectDetail(object);
-            const targetLat = telemetry?.tar_lat;
-            const targetLng = telemetry?.tar_lng;
-            const numericTargetLat =
-              typeof targetLat === 'number'
-                ? targetLat
-                : typeof targetLat === 'string'
-                  ? Number.parseFloat(targetLat)
-                  : Number.NaN;
-            const numericTargetLng =
-              typeof targetLng === 'number'
-                ? targetLng
-                : typeof targetLng === 'string'
-                  ? Number.parseFloat(targetLng)
-                  : Number.NaN;
+            const numericTargetLat = parseNumericValue(telemetry?.tar_lat);
+            const numericTargetLng = parseNumericValue(telemetry?.tar_lng ?? telemetry?.tar_long);
             const hasTarget = Number.isFinite(numericTargetLat) && Number.isFinite(numericTargetLng);
             const targetDisplay = hasTarget
               ? `${formatCoordinateValue(numericTargetLat)} , ${formatCoordinateValue(numericTargetLng)}`
@@ -990,20 +987,8 @@ const DroneListPanel = ({
               {(() => {
                 const detailObject = detailEntry.object;
                 const telemetry = getObjectDetail(detailObject);
-                const targetLat = telemetry?.tar_lat;
-                const targetLng = telemetry?.tar_lng;
-                const numericTargetLat =
-                  typeof targetLat === 'number'
-                    ? targetLat
-                    : typeof targetLat === 'string'
-                      ? Number.parseFloat(targetLat)
-                      : Number.NaN;
-                const numericTargetLng =
-                  typeof targetLng === 'number'
-                    ? targetLng
-                    : typeof targetLng === 'string'
-                      ? Number.parseFloat(targetLng)
-                      : Number.NaN;
+                const numericTargetLat = parseNumericValue(telemetry?.tar_lat);
+                const numericTargetLng = parseNumericValue(telemetry?.tar_lng ?? telemetry?.tar_long);
                 const targetValid = Number.isFinite(numericTargetLat) && Number.isFinite(numericTargetLng);
                 const latValue = getObjectLatitude(detailObject);
                 const lngValue = getObjectLongitude(detailObject);

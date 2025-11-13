@@ -10,7 +10,7 @@ import { Icon } from '@iconify/react';
 import { type DetectedObject } from '../types/detection';
 import DetectionPopup from './DetectionPopup';
 import 'mapbox-gl/dist/mapbox-gl.css';
-import { getObjectLatitude, getObjectLongitude } from '../utils/objectGeo';
+// import { getObjectLatitude, getObjectLongitude } from '../utils/objectGeo';
 
 // โหลด Iconify สำหรับใช้ dynamic icons
 if (typeof window !== 'undefined') {
@@ -83,6 +83,19 @@ const distanceBetween = (lat1: number, lng1: number, lat2: number, lng2: number)
   return Math.sqrt(dLat * dLat + dLng * dLng);
 };
 
+const getPrimaryCoordinates = (object: DetectedObject): LatLng | null => {
+  const raw = object as unknown as Record<string, unknown>;
+  const lat = toOptionalNumber((raw.lat as number | string | null) ?? (raw.latitude as number | string | null) ?? null);
+  const lng = toOptionalNumber(
+    (raw.lng as number | string | null) ??
+      (raw.long as number | string | null) ??
+      (raw.lon as number | string | null) ??
+      null,
+  );
+  if (lat === null || lng === null) return null;
+  return { lat, lng };
+};
+
 const EARTH_RADIUS_METERS = 6371000;
 
 const getMarkerDescriptors = (items: DetectedObject[], zoom: number): MarkerDescriptor[] => {
@@ -90,13 +103,12 @@ const getMarkerDescriptors = (items: DetectedObject[], zoom: number): MarkerDesc
   if (zoom >= 15) {
     return items
       .map((object) => {
-        const lat = getObjectLatitude(object);
-        const lng = getObjectLongitude(object);
-        if (lat === null || lng === null) return null;
+        const coords = getPrimaryCoordinates(object);
+        if (!coords) return null;
         return {
           type: 'single' as const,
-          lat,
-          lng,
+          lat: coords.lat,
+          lng: coords.lng,
           object,
         };
       })
@@ -107,9 +119,9 @@ const getMarkerDescriptors = (items: DetectedObject[], zoom: number): MarkerDesc
   const clusters: Array<{ lat: number; lng: number; objects: DetectedObject[] }> = [];
 
   items.forEach((object) => {
-    const lat = getObjectLatitude(object);
-    const lng = getObjectLongitude(object);
-    if (lat === null || lng === null) return;
+    const coords = getPrimaryCoordinates(object);
+    if (!coords) return;
+    const { lat, lng } = coords;
 
     const cluster = clusters.find((item) => distanceBetween(item.lat, item.lng, lat, lng) < tolerance);
     if (cluster) {
@@ -196,7 +208,7 @@ const MapComponent = ({
       .map((object) => {
         const telemetry = object.details ?? null;
         const lat = toOptionalNumber(telemetry?.tar_lat ?? null);
-        const lng = toOptionalNumber(telemetry?.tar_lng ?? null);
+        const lng = toOptionalNumber(telemetry?.tar_lng ?? telemetry?.tar_long ?? null);
         if (lat === null || lng === null) return null;
         return { lat, lng, object };
       })

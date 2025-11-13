@@ -21,7 +21,7 @@ const formatCoordinate = (value: number | string | null | undefined) => {
 const DetectionPopup = ({ object, imagePath }: DetectionPopupProps) => {
   const baseUrl = import.meta.env.VITE_API_BASE_URL?.replace('/api', '') ?? '';
   const imageUrl = imagePath && baseUrl ? `${baseUrl}${imagePath}` : null;
-  const detail = object.details ?? object.detail;
+  const detail = object.details;
   const speed = typeof detail?.speed === 'number' ? detail.speed : null;
   const altitude = typeof detail?.alt === 'number' ? detail.alt : null;
   const lat = getObjectLatitude(object);

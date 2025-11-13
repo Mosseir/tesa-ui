@@ -8,8 +8,9 @@ export interface DetectedObjectDetail {
   lng?: number;
   speed?: number;
   alt?: number;
-  tar_lat?: number;
-  tar_lng?: number;
+  tar_lat?: number;   // target latitude
+  tar_lng?: number;   // target longitude
+  tar_long?: number;  // target longitude (alternate field name)
 }
 
 export interface DetectedObject {
