@@ -198,7 +198,7 @@ const DefensiveAlertPanel = ({ feed }: { feed: UseDroneFeedResult }) => {
   const latest = feed.events[0];
 
   return (
-    <Panel title="Alert Status" backg>
+    <Panel title="Alert Status">
       <Stack spacing={2} sx={{ height: '100%' }}>
         <Stack direction="row" spacing={1} flexWrap="wrap">
           <Chip
