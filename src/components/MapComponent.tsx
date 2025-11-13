@@ -773,23 +773,18 @@ const MapComponent = ({
 
 
       el.addEventListener('click', (e) => {
-
         e.stopPropagation();
-
+        if (selectedObject?.obj_id === obj.obj_id) {
+          handleClose();
+          return;
+        }
         setSelectedObject(obj);
-
         selectedMarkerRef.current = el;
-
         const rect = el.getBoundingClientRect();
-
         setCardPosition({
-
           x: rect.left + rect.width / 2,
-
           y: rect.top,
-
         });
-
       });  
 
 
