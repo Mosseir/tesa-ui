@@ -236,7 +236,7 @@ const formatDistance = (meters: number) => {
   return `${meters.toFixed(0)} m`;
 };
 
-const getObjectDetail = (object: DetectedObject) => object.details ?? object.detail ?? null;
+const getObjectDetail = (object: DetectedObject) => object.details ?? null;
 
 const formatSpeed = (value: number | null) => {
   if (value === null || !Number.isFinite(value)) return 'N/A';
@@ -247,14 +247,6 @@ const getObjectSpeed = (object: DetectedObject): number | null => {
   const detail = object.details;
   if (typeof detail?.speed === 'number' && Number.isFinite(detail.speed)) {
     return detail.speed;
-  }
-  return null;
-};
-
-const getObjectEta = (object: DetectedObject): number | null => {
-  const detail = getObjectDetail(object);
-  if (typeof detail?.eta === 'number' && Number.isFinite(detail.eta)) {
-    return detail.eta;
   }
   return null;
 };
@@ -951,8 +943,6 @@ const DroneListPanel = ({
             const targetDisplay = hasTarget
               ? `${formatCoordinateValue(numericTargetLat)} , ${formatCoordinateValue(numericTargetLng)}`
               : 'N/A';
-            const etaSeconds = getObjectEta(object);
-            const etaDisplay = etaSeconds !== null ? formatEta(etaSeconds) : 'N/A';
             const latValue = getObjectLatitude(object);
             const lngValue = getObjectLongitude(object);
             return (
@@ -978,9 +968,6 @@ const DroneListPanel = ({
                         </Typography>
                         <Typography variant="caption" color="text.secondary">
                           Target: {targetDisplay}
-                        </Typography>
-                        <Typography variant="caption" color="text.secondary">
-                          ETA: {etaDisplay}
                         </Typography>
                         <Typography variant="caption" color="text.secondary">
                           Last seen: {new Date(lastSeen).toLocaleString()}
@@ -1020,7 +1007,6 @@ const DroneListPanel = ({
                 const targetValid = Number.isFinite(numericTargetLat) && Number.isFinite(numericTargetLng);
                 const latValue = getObjectLatitude(detailObject);
                 const lngValue = getObjectLongitude(detailObject);
-                const etaSeconds = getObjectEta(detailObject);
 
                 return (
                   <>
@@ -1042,11 +1028,6 @@ const DroneListPanel = ({
                         ? `${formatCoordinateValue(numericTargetLat)} , ${formatCoordinateValue(numericTargetLng)}`
                         : 'N/A'}
                     </Typography>
-                    {etaSeconds !== null && (
-                      <Typography variant="body2" color="text.secondary">
-                        ETA: {formatEta(etaSeconds)}
-                      </Typography>
-                    )}
                     <Typography variant="body2" color="text.secondary">
                       Last seen: {new Date(detailEntry.lastSeen).toLocaleString()}
                     </Typography>

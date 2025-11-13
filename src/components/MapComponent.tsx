@@ -51,6 +51,12 @@ type MarkerDescriptor =
       objects: DetectedObject[];
     };
 
+type TargetMarkerDescriptor = {
+  lat: number;
+  lng: number;
+  object: DetectedObject;
+};
+
 type SearchSuggestion = {
   id: string;
   label: string;
@@ -158,6 +164,7 @@ const MapComponent = ({
   const mapContainer = useRef<HTMLDivElement>(null);
   const map = useRef<mapboxgl.Map | null>(null);
   const markers = useRef<mapboxgl.Marker[]>([]);
+  const targetMarkers = useRef<mapboxgl.Marker[]>([]);
   const selectedMarkerRef = useRef<HTMLDivElement | null>(null);
   const defaultMarkerRef = useRef<mapboxgl.Marker | null>(null);
 
@@ -183,6 +190,18 @@ const MapComponent = ({
     () => getMarkerDescriptors(objects, currentZoom),
     [objects, currentZoom],
   );
+
+  const targetDescriptors = useMemo<TargetMarkerDescriptor[]>(() => {
+    return objects
+      .map((object) => {
+        const telemetry = object.details ?? null;
+        const lat = toOptionalNumber(telemetry?.tar_lat ?? null);
+        const lng = toOptionalNumber(telemetry?.tar_lng ?? null);
+        if (lat === null || lng === null) return null;
+        return { lat, lng, object };
+      })
+      .filter(Boolean) as TargetMarkerDescriptor[];
+  }, [objects]);
 
   useEffect(() => {
     if (defaultLocation) {
@@ -841,6 +860,50 @@ const MapComponent = ({
       duration: 1200,
     });
   }, [focusPoint]);
+
+  useEffect(() => {
+    if (!map.current) return;
+
+    targetMarkers.current.forEach((marker) => marker.remove());
+    targetMarkers.current = [];
+
+    if (!isMapReady || targetDescriptors.length === 0) return;
+
+    targetDescriptors.forEach(({ lat, lng, object }) => {
+      const el = document.createElement('div');
+      el.className = 'target-waypoint-marker';
+      el.style.cssText = `
+        width: 32px;
+        height: 32px;
+        border-radius: 8px;
+        background-color: rgba(255, 193, 7, 0.95);
+        border: 2px solid #ff6f00;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        box-shadow: 0 2px 8px rgba(0,0,0,0.35);
+      `;
+      el.title = `Waypoint for ${object.obj_id}`;
+
+      const icon = document.createElement('span');
+      icon.className = 'iconify';
+      icon.setAttribute('data-icon', 'mdi:crosshairs-gps');
+      icon.style.cssText = `
+        color: #5d4037;
+        font-size: 18px;
+      `;
+
+      el.appendChild(icon);
+
+      const marker = new mapboxgl.Marker(el).setLngLat([lng, lat]).addTo(map.current!);
+      targetMarkers.current.push(marker);
+    });
+
+    return () => {
+      targetMarkers.current.forEach((marker) => marker.remove());
+      targetMarkers.current = [];
+    };
+  }, [isMapReady, targetDescriptors]);
 
   const fitToAllPoints = useCallback(
     (withAnimation = true) => {
